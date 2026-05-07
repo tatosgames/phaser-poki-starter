@@ -18,6 +18,7 @@ import { ScaleManager } from '../core/ScaleManager'
 import { getViewportLayout, type ViewportLayout } from '../core/ViewportLayout'
 import { GAME_CONFIG } from '../data/gameConfig'
 import { BALANCING } from '../data/balancing'
+import { pokiBridge } from '../lib/poki/PokiBridge'
 
 const BACKDROP_COLORS = [0xffc857, 0xff8c42, 0xf26b5d, 0x7ccf5b, 0x89c2ff]
 
@@ -38,6 +39,7 @@ export class MenuScene extends Phaser.Scene {
     this.menuProfile = this.getMenuProfile(layout)
     this.cameras.main.setBackgroundColor(config.game.backgroundColor)
     this.cameras.main.fadeIn(BALANCING.sceneFadeDuration, 0, 0, 0)
+    pokiBridge.init(this)
 
     this.createBackground(layout)
     this.createBackdropFruitGrid(layout)

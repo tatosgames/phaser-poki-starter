@@ -197,6 +197,13 @@ export class GameScene extends Phaser.Scene {
     bg.fillStyle(0xffb18f, 0.1)
     bg.fillCircle(CX + 110, GAME_CONFIG.height - 180, 210)
   }
+  private createPools(): void {
+    for (let i = 0; i < BALANCING.splatterPoolSize; i++) {
+      const image = this.add.image(0, 0, 'splatter')
+      image.setVisible(false)
+      image.setDepth(30)
+      this.splatterPool.push({ image, active: false })
+    }
 
   private createParticles(): void {
     this.popParticles = this.add.particles(0, 0, 'particle', {
