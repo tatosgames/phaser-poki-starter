@@ -14,6 +14,8 @@ import { AudioManager } from '../core/AudioManager'
 import { pokiBridge } from '../lib/poki/PokiBridge'
 import { getViewportLayout } from '../core/ViewportLayout'
 import { ComboWidget } from '../components/ComboWidget'
+import { GameTopHud } from '../components/GameTopHud'
+import { RipeFruitCue } from '../components/RipeFruitCue'
 import { ComboFxController } from '../systems/ComboFxController'
 import { ComboSystem } from '../systems/ComboSystem'
 import { ScoreSystem } from '../systems/ScoreSystem'
@@ -25,7 +27,6 @@ import {
   getFruitPopLevel,
   getFruitPopProgress
 } from '../data/balancing'
-import { formatTime } from '../utils/helpers'
 import type {
   FruitPopOutcome,
   FruitPopGrade,
@@ -63,7 +64,7 @@ interface SplatterEntry {
 const FRUIT_TINTS: Record<FruitState, number> = {
   0: 0x7ccf5b,
   1: 0xffcf5a,
-  2: 0xf26b5d,
+  2: 0xff6258,
   3: 0x7a4b35
 }
 
@@ -90,11 +91,8 @@ export class GameScene extends Phaser.Scene {
   private splatterPool: SplatterEntry[] = []
   private popupPool: PopupEntry[] = []
 
-  private dirtTrack!: Phaser.GameObjects.Graphics
-  private dirtFill!: Phaser.GameObjects.Graphics
-  private dirtValueText!: Phaser.GameObjects.Text
-  private timerText!: Phaser.GameObjects.Text
-  private perfectText!: Phaser.GameObjects.Text
+  private topHud!: GameTopHud
+  private ripeCue!: RipeFruitCue
   private comboSystem!: ComboSystem
   private comboWidget: ComboWidget | null = null
   private comboFx: ComboFxController | null = null
@@ -103,26 +101,17 @@ export class GameScene extends Phaser.Scene {
   private dirtMeter = 0
   private perfectPops = 0
   private fruitsRemaining = 0
-  private lastShownSecond = -1
   private lastDirtValue = -1
   private lastPerfectValue = -1
   private gameEnded = false
   private resultQueued = false
   private hasPlayerInteracted = false
   private firstInteractionHandler: (() => void) | null = null
-  private dirtLabelX = 16
-  private dirtLabelY = 10
-  private dirtValueX = 16
-  private dirtValueY = 28
-  private dirtBarX = 16
-  private dirtBarY = 92
-  private dirtBarWidth = 170
-  private timerTextX = GAME_CONFIG.width - 16
-  private timerTextY = 12
-  private perfectTextX = CX
-  private perfectTextY = 72
   private comboWidgetX = CX
   private comboWidgetY = 120
+  private boardCenterX = CX
+  private boardCenterY = GAME_CONFIG.height / 2
+  private ripeCueBaseSize = 42
 
   constructor() {
     super({ key: 'GameScene' })
@@ -147,7 +136,6 @@ export class GameScene extends Phaser.Scene {
     this.dirtMeter = 0
     this.perfectPops = 0
     this.fruitsRemaining = 0
-    this.lastShownSecond = -1
     this.lastDirtValue = -1
     this.lastPerfectValue = -1
     this.gameEnded = false
@@ -155,12 +143,14 @@ export class GameScene extends Phaser.Scene {
     this.hasPlayerInteracted = false
     this.firstInteractionHandler = null
     this.comboSystem = new ComboSystem(this.levelConfig.comboResetMs)
+    this.ripeCue = new RipeFruitCue({ scene: this, animationEnabled: true })
 
     this.createBackground()
     this.createParticles()
     this.createPools()
     this.createHUD()
     this.createFruitBoard()
+    this.refreshRipeCue()
     this.updateHUD(true)
     pokiBridge.init(this)
     this.armFirstInputGate()
@@ -223,119 +213,28 @@ export class GameScene extends Phaser.Scene {
   private createHUD(): void {
     const layout = getViewportLayout()
     const progress = getFruitPopProgress(this.level)
-    const progressBarWidth = layout.isLandscape ? 122 : 220
-    const progressBarHeight = 10
-    const progressBarX = layout.isLandscape && layout.sideRailX !== null
-      ? layout.sideRailX + 8
-      : layout.cx - progressBarWidth / 2
-    const progressBarY = layout.isLandscape ? 170 : 34
-    const progressFillWidth = Math.max(0, Math.round(progressBarWidth * progress))
-    const levelTextX = layout.isLandscape && layout.sideRailX !== null ? layout.sideRailX + 8 : layout.cx
-    const levelTextOrigin = layout.isLandscape ? 0 : 0.5
-    const boardTextX = levelTextX
-    const boardTextOrigin = levelTextOrigin
+    const panelWidth = Math.min(layout.width - layout.safeMargin * 2, layout.isLandscape ? 196 : 198)
+    const panelHeight = layout.isLandscape ? 112 : 116
+    const panelX = layout.safeMargin + panelWidth / 2
+    const panelY = layout.safeMargin + panelHeight / 2 + (layout.isLandscape ? 0 : 2)
 
-    this.dirtLabelX = layout.isLandscape && layout.sideRailX !== null ? layout.sideRailX + 8 : 16
-    this.dirtLabelY = layout.isLandscape ? 220 : 10
-    this.dirtValueX = this.dirtLabelX
-    this.dirtValueY = this.dirtLabelY + 18
-    this.dirtBarX = this.dirtLabelX
-    this.dirtBarY = this.dirtValueY + 20
-    this.dirtBarWidth = layout.isLandscape ? 122 : 170
-    this.timerTextX = layout.isLandscape && layout.sideRailX !== null ? layout.sideRailX + layout.sideRailWidth - 8 : GAME_CONFIG.width - 16
-    this.timerTextY = layout.isLandscape ? 24 : 12
-    this.perfectTextX = layout.isLandscape ? layout.boardCenterX : layout.cx
-    this.perfectTextY = layout.isLandscape ? 42 : 72
-    this.comboWidgetX = layout.isLandscape ? layout.boardCenterX : layout.cx
-    this.comboWidgetY = layout.isLandscape ? 92 : 126
+    this.topHud = new GameTopHud({
+      scene: this,
+      x: panelX,
+      y: panelY,
+      width: panelWidth,
+      height: panelHeight,
+      compact: layout.isLandscape,
+      level: this.level,
+      progress,
+      dirtValue: this.dirtMeter,
+      dirtMax: BALANCING.dirtFailThreshold,
+      timerMs: this.timerRemainingMs,
+      perfectCount: this.perfectPops
+    })
 
-    this.add
-      .text(levelTextX, layout.headerTop, `LEVEL ${this.level} / ${FRUIT_POP_MAX_LEVEL}`, {
-        fontSize: '18px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#7a3e2c',
-        fontStyle: 'bold',
-        resolution: 2
-      })
-      .setOrigin(levelTextOrigin, 0)
-      .setDepth(20)
-
-    this.add
-      .text(boardTextX, layout.headerTop + 20, `BOARD ${this.levelConfig.boardLabel}`, {
-        fontSize: '16px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#8c7352',
-        resolution: 2
-      })
-      .setOrigin(boardTextOrigin, 0)
-      .setDepth(20)
-
-    const progressTrack = this.add.graphics().setDepth(19)
-    progressTrack.fillStyle(0x8c7352, 0.18)
-    progressTrack.fillRoundedRect(progressBarX, progressBarY, progressBarWidth, progressBarHeight, 5)
-    progressTrack.lineStyle(1, 0x7a3e2c, 0.25)
-    progressTrack.strokeRoundedRect(progressBarX, progressBarY, progressBarWidth, progressBarHeight, 5)
-
-    const progressFill = this.add.graphics().setDepth(20)
-    if (progressFillWidth > 0) {
-      progressFill.fillStyle(0x7ccf5b, 1)
-      progressFill.fillRoundedRect(progressBarX, progressBarY, progressFillWidth, progressBarHeight, 5)
-    }
-
-    this.add
-      .text(progressBarX + progressBarWidth + 8, progressBarY - 1, `${Math.round(progress * 100)}%`, {
-        fontSize: '14px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#7a3e2c',
-        resolution: 2
-      })
-      .setOrigin(0, 0)
-      .setDepth(20)
-
-    this.add
-      .text(this.dirtLabelX, this.dirtLabelY, 'DIRT', {
-        fontSize: '14px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#7a3e2c',
-        fontStyle: 'bold',
-        resolution: 2
-      })
-      .setDepth(20)
-
-    this.dirtValueText = this.add
-      .text(this.dirtValueX, this.dirtValueY, '0 / 100', {
-        fontSize: '16px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#7a3e2c',
-        resolution: 2
-      })
-      .setDepth(20)
-
-    this.dirtTrack = this.add.graphics().setDepth(19)
-    this.dirtFill = this.add.graphics().setDepth(20)
-
-    this.timerText = this.add
-      .text(this.timerTextX, this.timerTextY, formatTime(this.levelConfig.timerStartMs), {
-        fontSize: '24px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#7a3e2c',
-        fontStyle: 'bold',
-        resolution: 2
-      })
-      .setOrigin(layout.isLandscape ? 1 : 1, 0)
-      .setDepth(20)
-
-    this.perfectText = this.add
-      .text(this.perfectTextX, this.perfectTextY, 'Perfect: 0', {
-        fontSize: '18px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#7a3e2c',
-        fontStyle: 'bold',
-        resolution: 2
-      })
-      .setOrigin(0.5, 0)
-      .setDepth(20)
-
+    this.comboWidgetX = layout.cx
+    this.comboWidgetY = panelY + panelHeight / 2 + 26
     this.comboWidget = new ComboWidget({
       scene: this,
       x: this.comboWidgetX,
@@ -346,7 +245,6 @@ export class GameScene extends Phaser.Scene {
     })
     this.comboFx = new ComboFxController(this)
   }
-
   private createPools(): void {
     for (let i = 0; i < BALANCING.splatterPoolSize; i++) {
       const image = this.add.image(0, 0, 'splatter')
@@ -389,6 +287,9 @@ export class GameScene extends Phaser.Scene {
     const spanY = boardRows * fruitSize + (boardRows - 1) * gridGap
     const startX = viewport.boardCenterX - spanX / 2 + fruitSize / 2
     const startY = viewport.boardTop + (availableHeight - spanY) / 2 + fruitSize / 2
+    this.boardCenterX = startX + ((boardCols - 1) * (fruitSize + gridGap)) / 2
+    this.boardCenterY = startY + ((boardRows - 1) * (fruitSize + gridGap)) / 2
+    this.ripeCueBaseSize = fruitSize
 
     this.fruitsRemaining = boardCols * boardRows
 
@@ -476,13 +377,13 @@ export class GameScene extends Phaser.Scene {
     } else if (state === 1) {
       scale += wobble * 0.035
     } else if (state === 2) {
-      scale += wobble * 0.06
+      scale += 0.03 + wobble * 0.085
     } else {
-      scale = 0.96 + wobble * 0.03
+      scale = 0.93 + wobble * 0.02
     }
 
     fruit.setScale(scale)
-    fruit.setAlpha(state === 3 ? 0.98 : 1)
+    fruit.setAlpha(state === 3 ? 0.88 : 1)
     fruit.setAngle(Math.sin(cell.elapsedMs * 0.0025 + cell.wobblePhase) * (state === 3 ? 5 : 3))
   }
 
@@ -492,8 +393,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.timerRemainingMs = Math.max(0, this.timerRemainingMs - delta)
-    this.updateTimerText()
-    this.updateTimerPulse()
+    this.updateTimer()
 
     if (this.timerRemainingMs <= 0) {
       this.endRound('lose', "Time's up")
@@ -520,6 +420,8 @@ export class GameScene extends Phaser.Scene {
       cell.elapsedMs += delta * cell.ripenRate
       this.updateFruitVisual(cell)
     }
+
+    this.refreshRipeCue()
   }
 
   private tapFruit(cell: FruitCell): void {
@@ -585,6 +487,7 @@ export class GameScene extends Phaser.Scene {
     this.animateFruitRemoval(cell.sprite)
     this.drawDirtMeter()
     this.updatePerfectText()
+    this.refreshRipeCue()
 
     if (this.dirtMeter >= BALANCING.dirtFailThreshold) {
       this.endRound('lose', 'Too rotten')
@@ -671,51 +574,18 @@ export class GameScene extends Phaser.Scene {
 
   private updateHUD(force = false): void {
     if (force) {
-      this.lastShownSecond = -1
       this.lastDirtValue = -1
       this.lastPerfectValue = -1
     }
 
-    this.updateTimerText()
+    this.updateTimer(force)
     this.drawDirtMeter()
     this.updatePerfectText()
   }
 
-  private updateTimerText(): void {
-    const shownSecond = Math.ceil(this.timerRemainingMs / 1000)
-    if (shownSecond === this.lastShownSecond) {
-      return
-    }
-
-    this.lastShownSecond = shownSecond
-    this.timerText.setText(formatTime(this.timerRemainingMs))
-    this.tweens.killTweensOf(this.timerText)
-    this.timerText.setScale(1)
-
-    if (shownSecond <= 5) {
-      this.timerText.setColor('#b0362f')
-    } else if (shownSecond <= 10) {
-      this.timerText.setColor('#d95a4e')
-    } else {
-      this.timerText.setColor('#7a3e2c')
-    }
-  }
-
-  private updateTimerPulse(): void {
-    const remainingSeconds = this.timerRemainingMs / 1000
-    if (remainingSeconds <= 5) {
-      const pulse = 1 + Math.sin(this.time.now * 0.02) * 0.08
-      this.timerText.setScale(pulse)
-      return
-    }
-
-    if (remainingSeconds <= 10) {
-      const pulse = 1 + Math.sin(this.time.now * 0.012) * 0.03
-      this.timerText.setScale(pulse)
-      return
-    }
-
-    this.timerText.setScale(1)
+  private updateTimer(force = false): void {
+    this.topHud.setTimer(this.timerRemainingMs, force)
+    this.topHud.pulseTimer(this.timerRemainingMs)
   }
 
   private drawDirtMeter(): void {
@@ -724,31 +594,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.lastDirtValue = this.dirtMeter
-
     const ratio = Phaser.Math.Clamp(this.dirtMeter / BALANCING.dirtFailThreshold, 0, 1)
-    const barWidth = this.dirtBarWidth
-    const barHeight = 14
-    const fillWidth = Math.max(0, Math.round(barWidth * ratio))
-    let fillColor = 0x7ccf5b
-    if (ratio >= 0.75) {
-      fillColor = 0xd95a4e
-    } else if (ratio >= 0.4) {
-      fillColor = 0xffb14d
-    }
-
-    this.dirtTrack.clear()
-    this.dirtTrack.fillStyle(0x8c7352, 0.16)
-    this.dirtTrack.fillRoundedRect(this.dirtBarX, this.dirtBarY, barWidth, barHeight, 7)
-    this.dirtTrack.lineStyle(2, 0x7a3e2c, 0.28)
-    this.dirtTrack.strokeRoundedRect(this.dirtBarX, this.dirtBarY, barWidth, barHeight, 7)
-
-    this.dirtFill.clear()
-    if (fillWidth > 0) {
-      this.dirtFill.fillStyle(fillColor, 1)
-      this.dirtFill.fillRoundedRect(this.dirtBarX, this.dirtBarY, fillWidth, barHeight, 7)
-    }
-
-    this.dirtValueText.setText(`${this.dirtMeter} / ${BALANCING.dirtFailThreshold}`)
+    this.topHud.setDirt(ratio, `${this.dirtMeter} / ${BALANCING.dirtFailThreshold}`, this.dirtMeter > 0)
   }
 
   private updatePerfectText(): void {
@@ -757,7 +604,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.lastPerfectValue = this.perfectPops
-    this.perfectText.setText(`Perfect: ${this.perfectPops}`)
+    this.topHud.setPerfect(this.perfectPops, this.perfectPops > 0)
   }
 
   private endRound(outcome: FruitPopOutcome, reason: string): void {
@@ -825,6 +672,12 @@ export class GameScene extends Phaser.Scene {
     this.disarmFirstInputGate()
     this.comboFx?.destroy()
     this.comboFx = null
+    if (this.ripeCue) {
+      this.ripeCue.destroy()
+    }
+    if (this.topHud) {
+      this.topHud.destroy()
+    }
     if (this.comboWidget) {
       this.tweens.killTweensOf(this.comboWidget)
       this.comboWidget.destroy()
@@ -856,5 +709,36 @@ export class GameScene extends Phaser.Scene {
 
     this.popParticles.destroy()
     this.popParticles = null
+  }
+
+  private refreshRipeCue(): void {
+    if (!this.ripeCue) {
+      return
+    }
+
+    let primary: FruitCell | null = null
+    let bestDistance = Number.POSITIVE_INFINITY
+
+    for (let i = 0; i < this.fruits.length; i++) {
+      const cell = this.fruits[i]
+      if (!cell.active || this.getFruitState(cell.elapsedMs) !== 2) {
+        continue
+      }
+
+      const dx = cell.sprite.x - this.boardCenterX
+      const dy = cell.sprite.y - this.boardCenterY
+      const distance = dx * dx + dy * dy
+      if (distance < bestDistance) {
+        bestDistance = distance
+        primary = cell
+      }
+    }
+
+    if (!primary) {
+      this.ripeCue.hide()
+      return
+    }
+
+    this.ripeCue.show(primary.sprite.x, primary.sprite.y, this.ripeCueBaseSize)
   }
 }

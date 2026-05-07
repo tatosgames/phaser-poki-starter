@@ -1,4 +1,5 @@
 import type { ComboBreakEvent, ComboUpdate } from '../systems/ComboSystem'
+import { HUDTheme } from './HUDTheme'
 
 export interface ComboWidgetConfig {
   scene: Phaser.Scene
@@ -30,35 +31,35 @@ export class ComboWidget extends Phaser.GameObjects.Container {
     this.glow = cfg.scene.add.graphics()
     this.titleText = cfg.scene.add.text(0, -30, 'COMBO', {
       fontSize: '13px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#8c7352',
+      fontFamily: HUDTheme.typography.fontFamily,
+      color: HUDTheme.colors.textSecondary,
       fontStyle: 'bold',
       resolution: 2
     }).setOrigin(0.5)
 
     this.countText = cfg.scene.add.text(0, -6, '', {
       fontSize: '44px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
+      fontFamily: HUDTheme.typography.fontFamily,
+      color: HUDTheme.colors.textOnColor,
       fontStyle: 'bold',
-      stroke: '#7a3e2c',
+      stroke: HUDTheme.colors.textPrimary,
       strokeThickness: 6,
       resolution: 2
     }).setOrigin(0.5).setVisible(false)
 
     this.labelText = cfg.scene.add.text(0, 28, '', {
       fontSize: '18px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
+      fontFamily: HUDTheme.typography.fontFamily,
+      color: HUDTheme.colors.textOnColor,
       fontStyle: 'bold',
-      stroke: '#7a3e2c',
+      stroke: HUDTheme.colors.textPrimary,
       strokeThickness: 4,
       resolution: 2
     }).setOrigin(0.5).setVisible(false)
 
     this.breakText = cfg.scene.add.text(0, 8, '', {
       fontSize: '18px',
-      fontFamily: 'Arial, sans-serif',
+      fontFamily: HUDTheme.typography.fontFamily,
       color: '#f4d5c1',
       fontStyle: 'bold',
       stroke: '#6d5740',
@@ -173,15 +174,15 @@ export class ComboWidget extends Phaser.GameObjects.Container {
     const color = ratio > 0.8 ? 0x7ccf5b : ratio > 0.5 ? 0xffcf5a : ratio > 0.25 ? 0xffa94d : ratio > 0.12 ? 0xf26b5d : 0xffe680
 
     this.meterTrack.clear()
-    this.meterTrack.fillStyle(0x8c7352, 0.2)
-    this.meterTrack.fillRoundedRect(x, y, width, height, 4)
-    this.meterTrack.lineStyle(1, 0x7a3e2c, 0.28)
-    this.meterTrack.strokeRoundedRect(x, y, width, height, 4)
+    this.meterTrack.fillStyle(HUDTheme.colors.track, 0.88)
+    this.meterTrack.fillRoundedRect(x, y, width, height, HUDTheme.radius.bar)
+    this.meterTrack.lineStyle(1, HUDTheme.colors.trackStroke, 0.28)
+    this.meterTrack.strokeRoundedRect(x, y, width, height, HUDTheme.radius.bar)
 
     this.meterFill.clear()
     if (fill > 0) {
       this.meterFill.fillStyle(color, 1)
-      this.meterFill.fillRoundedRect(x, y, fill, height, 4)
+      this.meterFill.fillRoundedRect(x, y, fill, height, HUDTheme.radius.bar)
     }
 
     if (ratio < 0.25 && intensity >= 2 && this.animationEnabled) {
@@ -199,8 +200,8 @@ export class ComboWidget extends Phaser.GameObjects.Container {
   private spawnGhostNumber(count: number): void {
     const ghost = this.scene.add.text(0, -6, `x${count}`, {
       fontSize: '44px',
-      fontFamily: 'Arial, sans-serif',
-      color: '#ffffff',
+      fontFamily: HUDTheme.typography.fontFamily,
+      color: HUDTheme.colors.textOnColor,
       fontStyle: 'bold',
       resolution: 2
     }).setOrigin(0.5).setAlpha(0.4)

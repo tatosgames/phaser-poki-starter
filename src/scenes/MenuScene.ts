@@ -14,6 +14,7 @@ import { RipenessGuide } from '../components/RipenessGuide'
 import { AudioManager } from '../core/AudioManager'
 import { SaveManager, SAVE_KEYS } from '../core/SaveManager'
 import { config } from '../core/Config'
+import { ScaleManager } from '../core/ScaleManager'
 import { getViewportLayout, type ViewportLayout } from '../core/ViewportLayout'
 import { GAME_CONFIG } from '../data/gameConfig'
 import { BALANCING } from '../data/balancing'
@@ -26,6 +27,7 @@ export class MenuScene extends Phaser.Scene {
   private enterKey!: Phaser.Input.Keyboard.Key
   private spaceKey!: Phaser.Input.Keyboard.Key
   private escapeKey!: Phaser.Input.Keyboard.Key
+  private menuProfile!: MenuProfile
 
   constructor() {
     super({ key: 'MenuScene' })
@@ -33,14 +35,15 @@ export class MenuScene extends Phaser.Scene {
 
   create(): void {
     const layout = getViewportLayout()
+    this.menuProfile = this.getMenuProfile(layout)
     this.cameras.main.setBackgroundColor(config.game.backgroundColor)
     this.cameras.main.fadeIn(BALANCING.sceneFadeDuration, 0, 0, 0)
 
     this.createBackground(layout)
     this.createBackdropFruitGrid(layout)
-    const subtitleY = this.createTitle(layout)
-    this.createRipenessGuide(layout, subtitleY)
-    this.createButtons(layout, subtitleY)
+    this.createTitle(layout)
+    this.createRipenessGuide(layout)
+    this.createButtons(layout)
     this.createFooter(layout)
     this.setupKeyboard()
 
@@ -61,10 +64,10 @@ export class MenuScene extends Phaser.Scene {
   private createBackdropFruitGrid(layout: ViewportLayout): void {
     const cols = 4
     const rows = 3
-    const startX = layout.isLandscape ? 42 : 82
-    const startY = layout.isLandscape ? 120 : 170
-    const gapX = layout.isLandscape ? 90 : 98
-    const gapY = layout.isLandscape ? 102 : 120
+    const startX = layout.isLandscape ? 42 : this.menuProfile.isCompact ? 70 : 82
+    const startY = layout.isLandscape ? 112 : this.menuProfile.isCompact ? 156 : 170
+    const gapX = layout.isLandscape ? 90 : this.menuProfile.isCompact ? 90 : 98
+    const gapY = layout.isLandscape ? 102 : this.menuProfile.isCompact ? 110 : 120
 
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
@@ -88,13 +91,15 @@ export class MenuScene extends Phaser.Scene {
     }
   }
 
-  private createTitle(layout: ViewportLayout): number {
-    const titleY = layout.isLandscape ? 178 : layout.cy - 170
-    const subtitleY = layout.isLandscape ? 248 : layout.cy - 102
+  private createTitle(layout: ViewportLayout): void {
+    const titleY = this.menuProfile.titleY
+    const subtitleY = this.menuProfile.subtitleY
+    const titleSize = this.menuProfile.titleFontSize
+    const subtitleSize = this.menuProfile.subtitleFontSize
 
     this.add
       .text(layout.cx, titleY, config.game.title, {
-        fontSize: '54px',
+        fontSize: titleSize,
         fontFamily: 'Arial, sans-serif',
         color: '#7a3e2c',
         fontStyle: 'bold',
@@ -106,41 +111,42 @@ export class MenuScene extends Phaser.Scene {
 
     this.add
       .text(layout.cx, subtitleY, 'Tap fruit at peak ripeness', {
-        fontSize: '20px',
+        fontSize: subtitleSize,
         fontFamily: 'Arial, sans-serif',
         color: '#8c7352',
         resolution: 2
       })
       .setOrigin(0.5)
-
-    return subtitleY
   }
 
-  private createRipenessGuide(layout: ViewportLayout, subtitleY: number): void {
-    const guideY = subtitleY + (layout.isLandscape ? 52 : 58)
+  private createRipenessGuide(layout: ViewportLayout): void {
     this.ripenessGuide = new RipenessGuide({
       scene: this,
       x: layout.cx,
-      y: guideY,
+      y: this.menuProfile.guideY,
       stages: ['green', 'yellow', 'orange', 'red', 'rotten'],
       targetStage: 'red',
       animationEnabled: true,
-      stageSpacing: layout.isLandscape ? 44 : 56
+      stageSpacing: this.menuProfile.guideSpacing
     })
   }
 
-  private createButtons(layout: ViewportLayout, subtitleY: number): void {
-    const playY = subtitleY + (layout.isLandscape ? 114 : 198)
-    const muteY = playY + (layout.isLandscape ? 78 : 84)
+  private createButtons(layout: ViewportLayout): void {
+    const playY = this.menuProfile.playY
+    const muteY = this.menuProfile.muteY
+    const playWidth = this.menuProfile.playWidth
+    const playFont = this.menuProfile.playFontSize
+    const muteWidth = this.menuProfile.muteWidth
+    const muteFont = this.menuProfile.muteFontSize
 
     new UIButton({
       scene: this,
       x: layout.cx,
       y: playY,
-      width: 240,
+      width: playWidth,
       height: 64,
       label: 'PLAY',
-      fontSize: 26,
+      fontSize: playFont,
       color: 0xf26b5d,
       hoverColor: 0xff7f73,
       pressColor: 0xd95a4e,
@@ -152,10 +158,10 @@ export class MenuScene extends Phaser.Scene {
       scene: this,
       x: layout.cx,
       y: muteY,
-      width: 180,
+      width: muteWidth,
       height: 48,
       label: muteLabel,
-      fontSize: 18,
+      fontSize: muteFont,
       color: 0x8c7352,
       hoverColor: 0xa28967,
       pressColor: 0x6d5740,
@@ -164,7 +170,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private createFooter(layout: ViewportLayout): void {
-    const footerY = layout.isLandscape ? 508 : layout.cy + 170
+    const footerY = this.menuProfile.footerY
     const hs = SaveManager.load<number>(SAVE_KEYS.highScore, 0)
     if (hs > 0) {
       this.add
@@ -229,4 +235,53 @@ export class MenuScene extends Phaser.Scene {
     this.spaceKey?.destroy()
     this.escapeKey?.destroy()
   }
+
+  private getMenuProfile(layout: ViewportLayout): MenuProfile {
+    const viewportWidth = ScaleManager.viewportWidth
+    const viewportHeight = ScaleManager.viewportHeight
+    const isCompact = viewportWidth <= 360 || viewportHeight <= 700 || (layout.isLandscape && viewportHeight <= 500)
+    const isTightLandscape = layout.isLandscape && viewportWidth <= 700
+
+    const titleY = layout.isLandscape ? (isTightLandscape ? 148 : 160) : isCompact ? 160 : 176
+    const subtitleY = titleY + (layout.isLandscape ? 46 : 60)
+    const guideSpacing = layout.isLandscape ? (isTightLandscape ? 36 : 40) : isCompact ? 42 : 48
+    const guideY = subtitleY + (layout.isLandscape ? 38 : isCompact ? 44 : 48)
+    const playY = guideY + (layout.isLandscape ? 68 : isCompact ? 78 : 92)
+    const muteY = playY + (isCompact ? 66 : 78)
+    const footerY = muteY + (isCompact ? 72 : 84)
+
+    return {
+      isCompact,
+      titleY,
+      subtitleY,
+      guideY,
+      guideSpacing,
+      playY,
+      playWidth: layout.isLandscape ? (isTightLandscape ? 220 : 230) : isCompact ? 220 : 240,
+      playFontSize: layout.isLandscape ? (isTightLandscape ? 24 : 26) : isCompact ? 24 : 26,
+      muteY,
+      muteWidth: layout.isLandscape ? 170 : isCompact ? 170 : 180,
+      muteFontSize: isCompact ? 17 : 18,
+      footerY,
+      subtitleFontSize: isCompact ? '18px' : '20px',
+      titleFontSize: layout.isLandscape ? (isTightLandscape ? '48px' : '50px') : isCompact ? '50px' : '54px'
+    }
+  }
+}
+
+interface MenuProfile {
+  isCompact: boolean
+  titleY: number
+  subtitleY: number
+  guideY: number
+  guideSpacing: number
+  playY: number
+  playWidth: number
+  playFontSize: number
+  muteY: number
+  muteWidth: number
+  muteFontSize: number
+  footerY: number
+  subtitleFontSize: string
+  titleFontSize: string
 }

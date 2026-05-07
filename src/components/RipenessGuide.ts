@@ -28,6 +28,10 @@ export class RipenessGuide extends Phaser.GameObjects.Container {
   private readonly stageSpacing: number
   private animationEnabled = true
   private readonly animatedTargets: Phaser.GameObjects.GameObject[] = []
+  private targetSprite: Phaser.GameObjects.Image | null = null
+  private targetRing: Phaser.GameObjects.Arc | null = null
+  private targetTapLabel: Phaser.GameObjects.Text | null = null
+  private targetSparkle: Phaser.GameObjects.Text | null = null
 
   constructor(cfg: RipenessGuideConfig) {
     super(cfg.scene, cfg.x, cfg.y)
@@ -75,11 +79,12 @@ export class RipenessGuide extends Phaser.GameObjects.Container {
       const sprite = this.scene.add.image(x, 0, 'fruit')
       sprite.setDisplaySize(isTarget ? targetSize : isEarly ? smallSize : iconSize, isTarget ? targetSize : isEarly ? smallSize : iconSize)
       sprite.setTint(STAGE_TINT[token])
-      sprite.setAlpha(token === 'rotten' ? 0.58 : isEarly ? 0.66 : 1)
+      sprite.setAlpha(token === 'rotten' ? 0.56 : isEarly ? 0.62 : 1)
       this.add(sprite)
       this.animatedTargets.push(sprite)
 
       if (isTarget) {
+        this.targetSprite = sprite
         this.addTargetEmphasis(x, targetSize)
       }
 
@@ -96,13 +101,12 @@ export class RipenessGuide extends Phaser.GameObjects.Container {
       if (i < this.stageTokens.length - 1) {
         const arrowX = x + this.stageSpacing / 2
         const arrow = this.scene.add.text(arrowX, 0, '→', {
-          fontSize: '20px',
+          fontSize: '18px',
           fontFamily: 'Arial, sans-serif',
           color: arrowColor,
           resolution: 2
-        }).setOrigin(0.5).setAlpha(0.8)
+        }).setOrigin(0.5).setAlpha(0.45)
         this.add(arrow)
-        this.animatedTargets.push(arrow)
       }
     }
 
@@ -116,6 +120,7 @@ export class RipenessGuide extends Phaser.GameObjects.Container {
     ring.setStrokeStyle(2, 0x9de667, 0.85)
     this.add(ring)
     this.sendToBack(ring)
+    this.targetRing = ring
     this.animatedTargets.push(ring)
 
     const tapLabel = this.scene.add.text(x, -34, 'TAP!', {
@@ -128,6 +133,7 @@ export class RipenessGuide extends Phaser.GameObjects.Container {
       resolution: 2
     }).setOrigin(0.5)
     this.add(tapLabel)
+    this.targetTapLabel = tapLabel
     this.animatedTargets.push(tapLabel)
 
     const sparkle = this.scene.add.text(x + iconSize * 0.34, -iconSize * 0.32, '✦', {
@@ -137,70 +143,58 @@ export class RipenessGuide extends Phaser.GameObjects.Container {
       resolution: 2
     }).setOrigin(0.5)
     this.add(sparkle)
+    this.targetSparkle = sparkle
     this.animatedTargets.push(sparkle)
   }
 
   private playLoops(): void {
-    const children = this.list as Phaser.GameObjects.GameObject[]
-    for (let i = 0; i < children.length; i++) {
-      const child = children[i]
-      if (child instanceof Phaser.GameObjects.Text && child.text === '→') {
-        this.scene.tweens.add({
-          targets: child,
-          x: child.x + 2,
-          alpha: 0.45,
-          duration: 680,
-          yoyo: true,
-          repeat: -1,
-          ease: 'Sine.easeInOut',
-          delay: i * 80
-        })
-        continue
-      }
+    if (this.targetSprite) {
+      this.scene.tweens.add({
+        targets: this.targetSprite,
+        scaleX: 1.1,
+        scaleY: 1.1,
+        duration: 440,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      })
+    }
 
-      if (child instanceof Phaser.GameObjects.Text && child.text === 'TAP!') {
-        this.scene.tweens.add({
-          targets: child,
-          scaleX: 1.1,
-          scaleY: 1.1,
-          alpha: 0.9,
-          duration: 480,
-          yoyo: true,
-          repeat: -1,
-          ease: 'Sine.easeInOut'
-        })
-        continue
-      }
+    if (this.targetRing) {
+      this.scene.tweens.add({
+        targets: this.targetRing,
+        scaleX: 1.06,
+        scaleY: 1.06,
+        alpha: 0.18,
+        duration: 560,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      })
+    }
 
-      if (child instanceof Phaser.GameObjects.Shape) {
-        this.scene.tweens.add({
-          targets: child,
-          scaleX: 1.12,
-          scaleY: 1.12,
-          alpha: 0.28,
-          duration: 560,
-          yoyo: true,
-          repeat: -1,
-          ease: 'Sine.easeInOut'
-        })
-        continue
-      }
+    if (this.targetTapLabel) {
+      this.scene.tweens.add({
+        targets: this.targetTapLabel,
+        y: -38,
+        alpha: 0.8,
+        duration: 520,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      })
+    }
 
-      if (child instanceof Phaser.GameObjects.Image) {
-        const targetScale = child.alpha > 0.95 ? 1.08 : 1.04
-        const duration = child.alpha > 0.95 ? 520 : 760
-        this.scene.tweens.add({
-          targets: child,
-          scaleX: targetScale,
-          scaleY: targetScale,
-          duration,
-          yoyo: true,
-          repeat: -1,
-          ease: 'Sine.easeInOut',
-          delay: i * 55
-        })
-      }
+    if (this.targetSparkle) {
+      this.scene.tweens.add({
+        targets: this.targetSparkle,
+        x: this.targetSparkle.x + 2,
+        alpha: 0.55,
+        duration: 640,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      })
     }
   }
 }
-
