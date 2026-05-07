@@ -1,452 +1,707 @@
 /**
  * GameScene.ts
- * Core gameplay scene — placeholder loop with all systems wired up.
+ * Fruit Pop gameplay.
  *
- * Poki: PokiPlugin automatically fires gameplayStart when this scene
- * starts and gameplayStop when it stops. No manual SDK calls needed
- * for those events.
- *
- * ── What's implemented (placeholder) ────────────────────────────────────────
- *   • Player sprite controlled by touch/mouse drag or keyboard arrows
- *   • Enemies spawn from the top, fall downward
- *   • Collision with enemy → lose a life → game over
- *   • Coins spawn periodically → collect for points
- *   • Score and lives HUD
- *   • Pause on Escape key
- *
- * ── What to replace for your specific game ──────────────────────────────────
- *   • Player movement logic
- *   • SpawnSystem callbacks (create your actual game objects)
- *   • Collision handlers
- *   • Win/lose conditions
+ * Core loop:
+ * - Square fruit board that grows per level
+ * - Fruits ripen over time
+ * - Tap outcomes depend on ripeness
+ * - Perfect taps score, overripe taps add dirt
+ * - Win by clearing the board, lose by timer or dirt
  */
 
-import { ScoreSystem } from '../systems/ScoreSystem'
-import { DifficultySystem } from '../systems/DifficultySystem'
-import { SpawnSystem } from '../systems/SpawnSystem'
 import { AudioManager } from '../core/AudioManager'
-import { config } from '../core/Config'
+import { pokiBridge } from '../lib/poki/PokiBridge'
+import { getViewportLayout } from '../core/ViewportLayout'
+import { ComboWidget } from '../components/ComboWidget'
+import { GameTopHud } from '../components/GameTopHud'
+import { RipeFruitCue } from '../components/RipeFruitCue'
+import { ComboFxController } from '../systems/ComboFxController'
+import { ComboSystem } from '../systems/ComboSystem'
+import { ScoreSystem } from '../systems/ScoreSystem'
 import { GAME_CONFIG } from '../data/gameConfig'
-import { BALANCING } from '../data/balancing'
-import { formatScore } from '../utils/helpers'
+import {
+  BALANCING,
+  FRUIT_POP_MAX_LEVEL,
+  getFruitPopBoardLayout,
+  getFruitPopLevel,
+  getFruitPopProgress
+} from '../data/balancing'
+import type {
+  FruitPopOutcome,
+  FruitPopGrade,
+  FruitPopResultData,
+  FruitPopRunData
+} from '../types/fruitPop'
 
 const CX = GAME_CONFIG.width / 2
 
+type FruitState = 0 | 1 | 2 | 3
+
+interface FruitCell {
+  sprite: Phaser.GameObjects.Image
+  hitArea: Phaser.GameObjects.Zone
+  state: FruitState
+  elapsedMs: number
+  active: boolean
+  ripenRate: number
+  wobblePhase: number
+  baseScale: number
+  row: number
+  col: number
+}
+
+interface PopupEntry {
+  text: Phaser.GameObjects.Text
+  active: boolean
+}
+
+interface SplatterEntry {
+  image: Phaser.GameObjects.Image
+  active: boolean
+}
+
+const FRUIT_TINTS: Record<FruitState, number> = {
+  0: 0x7ccf5b,
+  1: 0xffcf5a,
+  2: 0xff6258,
+  3: 0x7a4b35
+}
+
+const POPUP_COLORS: Record<FruitState, string> = {
+  0: '#8c7352',
+  1: '#a87b00',
+  2: '#ffffff',
+  3: '#5f4b2c'
+}
+
+const POPUP_LABELS: Record<FruitState, string> = {
+  0: 'EARLY',
+  1: 'WAIT',
+  2: 'PERFECT!',
+  3: 'ROTTEN!'
+}
+
 export class GameScene extends Phaser.Scene {
-  // ── Systems ────────────────────────────────────────────────────────────────
+  private level = 1
+  private levelConfig = getFruitPopLevel(1)
   private scoreSystem!: ScoreSystem
-  private difficultySystem!: DifficultySystem
-  private spawnSystem!: SpawnSystem
+  private fruits: FruitCell[] = []
+  private popParticles: Phaser.GameObjects.Particles.ParticleEmitter | null = null
+  private splatterPool: SplatterEntry[] = []
+  private popupPool: PopupEntry[] = []
 
-  // ── Game Objects ──────────────────────────────────────────────────────────
-  private player!: Phaser.Physics.Arcade.Sprite
-  private enemies!: Phaser.Physics.Arcade.Group
-  private coins!: Phaser.Physics.Arcade.Group
+  private topHud!: GameTopHud
+  private ripeCue!: RipeFruitCue
+  private comboSystem!: ComboSystem
+  private comboWidget: ComboWidget | null = null
+  private comboFx: ComboFxController | null = null
 
-  // ── HUD ───────────────────────────────────────────────────────────────────
-  private scoreText!: Phaser.GameObjects.Text
-  private livesText!: Phaser.GameObjects.Text
-  private pauseOverlay!: Phaser.GameObjects.Container
-
-  // ── State ─────────────────────────────────────────────────────────────────
-  private lives: number = BALANCING.startingLives
-  private isPaused: boolean = false
-  private isGameOver: boolean = false
-
-  // ── Input ─────────────────────────────────────────────────────────────────
-  private cursors!: Phaser.Types.Input.Keyboard.CursorKeys
-  private wasdKeys!: {
-    up: Phaser.Input.Keyboard.Key
-    down: Phaser.Input.Keyboard.Key
-    left: Phaser.Input.Keyboard.Key
-    right: Phaser.Input.Keyboard.Key
-  }
-  private escapeKey!: Phaser.Input.Keyboard.Key
-  private pointerX: number = CX
-  private pointerDown: boolean = false
-
-  // ── Spawn Entries (kept to update interval dynamically) ───────────────────
-  private enemySpawnEntry!: ReturnType<SpawnSystem['schedule']>
-  private coinSpawnEntry!: ReturnType<SpawnSystem['schedule']>
+  private timerRemainingMs: number = BALANCING.timerStartMs
+  private dirtMeter = 0
+  private perfectPops = 0
+  private fruitsRemaining = 0
+  private lastDirtValue = -1
+  private lastPerfectValue = -1
+  private gameEnded = false
+  private resultQueued = false
+  private comboWidgetX = CX
+  private comboWidgetY = 120
+  private boardCenterX = CX
+  private boardCenterY = GAME_CONFIG.height / 2
+  private ripeCueBaseSize = 42
 
   constructor() {
     super({ key: 'GameScene' })
   }
 
-  // ─── Lifecycle ─────────────────────────────────────────────────────────────
+  init(data: FruitPopRunData): void {
+    this.level = Math.max(1, Math.floor(data?.level ?? 1))
+    this.levelConfig = getFruitPopLevel(this.level)
+  }
 
   create(): void {
-    this.cameras.main.setBackgroundColor(config.game.backgroundColor)
+    this.cameras.main.setBackgroundColor(GAME_CONFIG.backgroundColor)
     this.cameras.main.fadeIn(BALANCING.sceneFadeDuration, 0, 0, 0)
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.shutdown, this)
 
-    // Reset state
-    this.lives = BALANCING.startingLives
-    this.isPaused = false
-    this.isGameOver = false
-
-    // Init systems
     this.scoreSystem = new ScoreSystem()
-    this.difficultySystem = new DifficultySystem()
-    this.spawnSystem = new SpawnSystem()
+    this.fruits = []
+    this.splatterPool = []
+    this.popupPool = []
+    this.destroyParticles()
+    this.timerRemainingMs = this.levelConfig.timerStartMs
+    this.dirtMeter = 0
+    this.perfectPops = 0
+    this.fruitsRemaining = 0
+    this.lastDirtValue = -1
+    this.lastPerfectValue = -1
+    this.gameEnded = false
+    this.resultQueued = false
+    this.comboSystem = new ComboSystem(this.levelConfig.comboResetMs)
+    this.ripeCue = new RipeFruitCue({ scene: this, animationEnabled: true })
 
-    this.createWorld()
-    this.createPlayer()
-    this.createGroups()
+    this.createBackground()
+    this.createParticles()
+    this.createPools()
     this.createHUD()
-    this.createPauseOverlay()
-    this.setupPhysics()
-    this.setupInput()
-    this.setupSpawning()
+    this.createFruitBoard()
+    this.refreshRipeCue()
+    this.updateHUD(true)
 
-    // TODO: analytics hook — gameplay_started
+    // TODO: analytics hook - gameplay_started
+  }
+
+  private createBackground(): void {
+    const bg = this.add.graphics()
+    bg.fillGradientStyle(0xf7ead4, 0xf7ead4, 0xe9f4dc, 0xe7f0ff, 1)
+    bg.fillRect(0, 0, GAME_CONFIG.width, GAME_CONFIG.height)
+
+    bg.fillStyle(0xffffff, 0.12)
+    bg.fillCircle(CX - 120, 150, 170)
+    bg.fillStyle(0xffb18f, 0.1)
+    bg.fillCircle(CX + 110, GAME_CONFIG.height - 180, 210)
+  }
+
+  private createParticles(): void {
+    this.popParticles = this.add.particles(0, 0, 'particle', {
+      speed: { min: 80, max: 200 },
+      scale: { start: 1, end: 0 },
+      alpha: { start: 0.9, end: 0 },
+      lifespan: 360,
+      quantity: BALANCING.particleBurstCount,
+      emitting: false
+    })
+    this.popParticles.setDepth(35)
+  }
+
+  private createHUD(): void {
+    const layout = getViewportLayout()
+    const progress = getFruitPopProgress(this.level)
+    const panelWidth = Math.min(layout.width - layout.safeMargin * 2, layout.isLandscape ? 196 : 198)
+    const panelHeight = layout.isLandscape ? 112 : 116
+    const panelX = layout.safeMargin + panelWidth / 2
+    const panelY = layout.safeMargin + panelHeight / 2 + (layout.isLandscape ? 0 : 2)
+
+    this.topHud = new GameTopHud({
+      scene: this,
+      x: panelX,
+      y: panelY,
+      width: panelWidth,
+      height: panelHeight,
+      compact: layout.isLandscape,
+      level: this.level,
+      progress,
+      dirtValue: this.dirtMeter,
+      dirtMax: BALANCING.dirtFailThreshold,
+      timerMs: this.timerRemainingMs,
+      perfectCount: this.perfectPops
+    })
+
+    this.comboWidgetX = layout.cx
+    this.comboWidgetY = panelY + panelHeight / 2 + 26
+    this.comboWidget = new ComboWidget({
+      scene: this,
+      x: this.comboWidgetX,
+      y: this.comboWidgetY,
+      width: layout.isLandscape ? 184 : 220,
+      showMeter: true,
+      animationEnabled: true
+    })
+    this.comboFx = new ComboFxController(this)
+  }
+  private createPools(): void {
+    for (let i = 0; i < BALANCING.splatterPoolSize; i++) {
+      const image = this.add.image(0, 0, 'splatter')
+      image.setVisible(false)
+      image.setDepth(30)
+      this.splatterPool.push({ image, active: false })
+    }
+
+    for (let i = 0; i < BALANCING.popupPoolSize; i++) {
+      const text = this.add
+        .text(0, 0, '', {
+          fontSize: '18px',
+          fontFamily: 'Arial, sans-serif',
+          color: '#ffffff',
+          fontStyle: 'bold',
+          resolution: 2,
+          stroke: '#7a3e2c',
+          strokeThickness: 3
+        })
+        .setOrigin(0.5)
+        .setVisible(false)
+        .setDepth(40)
+
+      this.popupPool.push({ text, active: false })
+    }
+  }
+
+  private createFruitBoard(): void {
+    const viewport = getViewportLayout()
+    const boardCols = this.levelConfig.boardCols
+    const boardRows = this.levelConfig.boardRows
+    const layout = getFruitPopBoardLayout(boardCols, boardRows)
+    const availableWidth = viewport.boardRight - viewport.boardLeft
+    const availableHeight = viewport.boardBottom - viewport.boardTop
+    const scaleToFit = Math.min(1, availableWidth / layout.boardSpanX, availableHeight / layout.boardSpanY)
+    const fruitSize = Math.max(28, Math.round(layout.fruitSize * scaleToFit))
+    const gridGap = Math.max(4, Math.round(layout.gridGap * scaleToFit))
+    const hitSize = Math.max(34, Math.round(layout.hitSize * scaleToFit))
+    const spanX = boardCols * fruitSize + (boardCols - 1) * gridGap
+    const spanY = boardRows * fruitSize + (boardRows - 1) * gridGap
+    const startX = viewport.boardCenterX - spanX / 2 + fruitSize / 2
+    const startY = viewport.boardTop + (availableHeight - spanY) / 2 + fruitSize / 2
+    this.boardCenterX = startX + ((boardCols - 1) * (fruitSize + gridGap)) / 2
+    this.boardCenterY = startY + ((boardRows - 1) * (fruitSize + gridGap)) / 2
+    this.ripeCueBaseSize = fruitSize
+
+    this.fruitsRemaining = boardCols * boardRows
+
+    for (let row = 0; row < boardRows; row++) {
+      for (let col = 0; col < boardCols; col++) {
+        const x = startX + col * (fruitSize + gridGap)
+        const cellY = startY + row * (fruitSize + gridGap)
+        const seed = this.getInitialFruitSeed()
+        const initialElapsed = seed.elapsedMs
+        const state = seed.state
+        const sprite = this.add.image(x, cellY, 'fruit')
+        sprite.setDisplaySize(fruitSize, fruitSize)
+        sprite.setDepth(10)
+        sprite.setTint(FRUIT_TINTS[state])
+        sprite.setAngle(Phaser.Math.Between(-8, 8))
+
+        const hitArea = this.add.zone(x, cellY, hitSize, hitSize)
+        hitArea.setDepth(11)
+        hitArea.setInteractive({ useHandCursor: true })
+
+        const cell: FruitCell = {
+          sprite,
+          hitArea,
+          state,
+          elapsedMs: initialElapsed,
+          active: true,
+          ripenRate: Phaser.Math.FloatBetween(this.levelConfig.ripenRateMin, this.levelConfig.ripenRateMax),
+          wobblePhase: Phaser.Math.FloatBetween(0, Math.PI * 2),
+          baseScale: 1,
+          row,
+          col
+        }
+
+        hitArea.on('pointerdown', () => this.tapFruit(cell))
+        this.fruits.push(cell)
+        this.updateFruitVisual(cell)
+      }
+    }
+  }
+
+  private getInitialFruitSeed(): { state: FruitState; elapsedMs: number } {
+    const roll = Math.random()
+
+    if (roll < this.levelConfig.greenStartChance) {
+      return {
+        state: 0,
+        elapsedMs: Phaser.Math.FloatBetween(0, this.levelConfig.greenToYellowMs - 1)
+      }
+    }
+
+    if (roll < this.levelConfig.greenStartChance + this.levelConfig.yellowStartChance) {
+      return {
+        state: 1,
+        elapsedMs: Phaser.Math.FloatBetween(
+          this.levelConfig.greenToYellowMs,
+          this.levelConfig.yellowToRedMs - 1
+        )
+      }
+    }
+
+    return {
+      state: 2,
+      elapsedMs: Phaser.Math.FloatBetween(this.levelConfig.yellowToRedMs, this.levelConfig.redToOverripeMs - 1)
+    }
+  }
+
+  private getFruitState(elapsedMs: number): FruitState {
+    if (elapsedMs >= this.levelConfig.redToOverripeMs) return 3
+    if (elapsedMs >= this.levelConfig.yellowToRedMs) return 2
+    if (elapsedMs >= this.levelConfig.greenToYellowMs) return 1
+    return 0
+  }
+
+  private updateFruitVisual(cell: FruitCell): void {
+    const state = this.getFruitState(cell.elapsedMs)
+    cell.state = state
+
+    const fruit = cell.sprite
+    fruit.setTint(FRUIT_TINTS[state])
+
+    const wobble = Math.sin(cell.elapsedMs * 0.006 + cell.wobblePhase)
+    let scale = cell.baseScale
+    if (state === 0) {
+      scale += wobble * 0.015
+    } else if (state === 1) {
+      scale += wobble * 0.035
+    } else if (state === 2) {
+      scale += 0.03 + wobble * 0.085
+    } else {
+      scale = 0.93 + wobble * 0.02
+    }
+
+    fruit.setScale(scale)
+    fruit.setAlpha(state === 3 ? 0.88 : 1)
+    fruit.setAngle(Math.sin(cell.elapsedMs * 0.0025 + cell.wobblePhase) * (state === 3 ? 5 : 3))
   }
 
   update(_time: number, delta: number): void {
-    if (this.isGameOver || this.isPaused) return
-
-    this.difficultySystem.update(delta)
-
-    // Dynamically update spawn intervals based on current difficulty
-    this.enemySpawnEntry.intervalMs = this.difficultySystem.getCurrentSpawnInterval()
-    this.coinSpawnEntry.intervalMs = this.difficultySystem.getCurrentSpawnInterval() * 1.5
-
-    this.spawnSystem.tick(delta)
-    this.updatePlayerMovement()
-    this.cleanupOffscreenObjects()
-  }
-
-  // ─── World ────────────────────────────────────────────────────────────────
-
-  private createWorld(): void {
-    // Gradient background (replace with tilemaps / parallax layers)
-    const bg = this.add.graphics()
-    bg.fillGradientStyle(0x1a1a2e, 0x1a1a2e, 0x16213e, 0x16213e, 1)
-    bg.fillRect(0, 0, GAME_CONFIG.width, GAME_CONFIG.height)
-    bg.setDepth(0)
-  }
-
-  // ─── Player ───────────────────────────────────────────────────────────────
-
-  private createPlayer(): void {
-    const spawnX = CX
-    const spawnY = GAME_CONFIG.height - 120
-
-    this.player = this.physics.add.sprite(spawnX, spawnY, 'player')
-    this.player.setCollideWorldBounds(true)
-    this.player.setDepth(10)
-
-    // Constrain player to bottom third of screen vertically
-    this.player.setMaxVelocity(BALANCING.playerSpeed, 0)
-  }
-
-  private updatePlayerMovement(): void {
-    const speed = BALANCING.playerSpeed
-    let vx = 0
-
-    // ── Keyboard ────────────────────────────────────────────────────────────
-    const leftDown =
-      this.cursors.left.isDown || this.wasdKeys.left.isDown
-    const rightDown =
-      this.cursors.right.isDown || this.wasdKeys.right.isDown
-
-    if (leftDown) vx = -speed
-    else if (rightDown) vx = speed
-
-    // ── Touch / Pointer ──────────────────────────────────────────────────────
-    if (this.pointerDown && !leftDown && !rightDown) {
-      const diff = this.pointerX - this.player.x
-      if (Math.abs(diff) > 8) {
-        vx = Math.sign(diff) * speed
-      }
+    if (this.gameEnded) {
+      return
     }
 
-    this.player.setVelocityX(vx)
-  }
+    this.timerRemainingMs = Math.max(0, this.timerRemainingMs - delta)
+    this.updateTimer()
 
-  // ─── Groups ───────────────────────────────────────────────────────────────
-
-  private createGroups(): void {
-    this.enemies = this.physics.add.group({
-      maxSize: 30,
-      runChildUpdate: false
-    })
-
-    this.coins = this.physics.add.group({
-      maxSize: 10,
-      runChildUpdate: false
-    })
-  }
-
-  // ─── Physics / Collisions ─────────────────────────────────────────────────
-
-  private setupPhysics(): void {
-    // Player ↔ Enemy
-    this.physics.add.overlap(
-      this.player,
-      this.enemies,
-      this.handlePlayerHitEnemy as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback,
-      undefined,
-      this
-    )
-
-    // Player ↔ Coin
-    this.physics.add.overlap(
-      this.player,
-      this.coins,
-      this.handlePlayerCollectCoin as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback,
-      undefined,
-      this
-    )
-  }
-
-  private handlePlayerHitEnemy(
-    _player: Phaser.GameObjects.GameObject,
-    enemy: Phaser.GameObjects.GameObject
-  ): void {
-    enemy.destroy()
-    this.lives--
-    this.updateHUD()
-
-    // Flash the player red
-    this.tweens.add({
-      targets: this.player,
-      alpha: 0.3,
-      duration: 80,
-      yoyo: true,
-      repeat: 3,
-      onComplete: () => this.player.setAlpha(1)
-    })
-
-    AudioManager.playSfx(this, 'sfx_hurt')
-
-    if (this.lives <= 0) {
-      this.triggerGameOver()
+    if (this.timerRemainingMs <= 0) {
+      this.endRound('lose', "Time's up")
+      return
     }
-  }
 
-  private handlePlayerCollectCoin(
-    _player: Phaser.GameObjects.GameObject,
-    coin: Phaser.GameObjects.GameObject
-  ): void {
-    coin.destroy()
-    this.scoreSystem.add(BALANCING.pointsPerEvent)
-    this.updateHUD()
-
-    AudioManager.playSfx(this, 'sfx_score')
-
-    // TODO: analytics hook — coin_collected, score: this.scoreSystem.getScore()
-  }
-
-  // ─── Spawning ─────────────────────────────────────────────────────────────
-
-  private setupSpawning(): void {
-    // Enemy spawner
-    this.enemySpawnEntry = this.spawnSystem.schedule(
-      () => this.spawnEnemy(),
-      BALANCING.initialSpawnInterval
-    )
-
-    // Coin spawner (less frequent than enemies)
-    this.coinSpawnEntry = this.spawnSystem.schedule(
-      () => this.spawnCoin(),
-      BALANCING.initialSpawnInterval * 1.5
-    )
-  }
-
-  private spawnEnemy(): void {
-    const x = Phaser.Math.Between(30, GAME_CONFIG.width - 30)
-    const enemy = this.enemies.get(x, -20, 'enemy') as Phaser.Physics.Arcade.Sprite | null
-    if (!enemy) return
-
-    enemy.setActive(true)
-    enemy.setVisible(true)
-    enemy.setPosition(x, -20)
-    enemy.setDepth(5)
-
-    const speed = 150 + this.difficultySystem.getDifficultyMultiplier() * 50
-    enemy.setVelocityY(speed)
-    enemy.setVelocityX(Phaser.Math.Between(-40, 40))
-  }
-
-  private spawnCoin(): void {
-    const x = Phaser.Math.Between(30, GAME_CONFIG.width - 30)
-    const coin = this.coins.get(x, -20, 'coin') as Phaser.Physics.Arcade.Sprite | null
-    if (!coin) return
-
-    coin.setActive(true)
-    coin.setVisible(true)
-    coin.setPosition(x, -20)
-    coin.setDepth(5)
-    coin.setVelocityY(120)
-  }
-
-  private cleanupOffscreenObjects(): void {
-    const bottom = GAME_CONFIG.height + 60
-
-    this.enemies.getChildren().forEach((obj) => {
-      const sprite = obj as Phaser.Physics.Arcade.Sprite
-      if (sprite.active && sprite.y > bottom) {
-        sprite.destroy()
-      }
-    })
-
-    this.coins.getChildren().forEach((obj) => {
-      const sprite = obj as Phaser.Physics.Arcade.Sprite
-      if (sprite.active && sprite.y > bottom) {
-        sprite.destroy()
-      }
-    })
-  }
-
-  // ─── HUD ──────────────────────────────────────────────────────────────────
-
-  private createHUD(): void {
-    // Score
-    this.scoreText = this.add
-      .text(CX, 30, 'Score: 0', {
-        fontSize: '22px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#ffffff',
-        fontStyle: 'bold',
-        resolution: 2
-      })
-      .setOrigin(0.5, 0)
-      .setDepth(20)
-
-    // Lives
-    this.livesText = this.add
-      .text(GAME_CONFIG.width - 16, 16, `❤️ ${this.lives}`, {
-        fontSize: '20px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#e74c3c',
-        resolution: 2
-      })
-      .setOrigin(1, 0)
-      .setDepth(20)
-
-    // Mute indicator (top left)
-    const muteIndicator = this.add
-      .text(16, 16, AudioManager.muted ? '🔇' : '🔊', {
-        fontSize: '24px',
-        resolution: 2
-      })
-      .setDepth(20)
-      .setInteractive({ useHandCursor: true })
-
-    muteIndicator.on('pointerdown', () => {
-      AudioManager.toggleMute()
-      muteIndicator.setText(AudioManager.muted ? '🔇' : '🔊')
-    })
-  }
-
-  private updateHUD(): void {
-    this.scoreText.setText(`Score: ${formatScore(this.scoreSystem.getScore())}`)
-    this.livesText.setText(`❤️ ${this.lives}`)
-  }
-
-  // ─── Pause ────────────────────────────────────────────────────────────────
-
-  private createPauseOverlay(): void {
-    this.pauseOverlay = this.add.container(0, 0)
-    this.pauseOverlay.setDepth(50)
-    this.pauseOverlay.setVisible(false)
-
-    // Dimmer
-    const dim = this.add.rectangle(
-      CX,
-      GAME_CONFIG.height / 2,
-      GAME_CONFIG.width,
-      GAME_CONFIG.height,
-      0x000000,
-      0.6
-    )
-    const pauseText = this.add
-      .text(CX, GAME_CONFIG.height / 2 - 40, 'PAUSED', {
-        fontSize: '40px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#ffffff',
-        fontStyle: 'bold',
-        resolution: 2
-      })
-      .setOrigin(0.5)
-
-    const resumeHint = this.add
-      .text(CX, GAME_CONFIG.height / 2 + 20, 'Press Escape to resume', {
-        fontSize: '18px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#aaaacc',
-        resolution: 2
-      })
-      .setOrigin(0.5)
-
-    this.pauseOverlay.add([dim, pauseText, resumeHint])
-  }
-
-  private togglePause(): void {
-    this.isPaused = !this.isPaused
-    this.pauseOverlay.setVisible(this.isPaused)
-    this.spawnSystem.isPaused ? this.spawnSystem.resume() : this.spawnSystem.pause()
-    this.physics.world.isPaused ? this.physics.resume() : this.physics.pause()
-  }
-
-  // ─── Input ────────────────────────────────────────────────────────────────
-
-  private setupInput(): void {
-    this.cursors = this.input.keyboard!.createCursorKeys()
-    this.wasdKeys = {
-      up: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.W),
-      down: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.S),
-      left: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.A),
-      right: this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.D)
+    const timeoutEvent = this.comboSystem.update(delta)
+    if (timeoutEvent) {
+      this.comboWidget?.onBreak(timeoutEvent)
+      this.comboFx?.onComboBreak(timeoutEvent, this.comboWidgetX, this.comboWidgetY)
     }
-    this.escapeKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC)
-    this.escapeKey.on('down', this.togglePause, this)
 
-    // Touch / pointer movement
-    this.input.on(Phaser.Input.Events.POINTER_DOWN, (ptr: Phaser.Input.Pointer) => {
-      this.pointerDown = true
-      this.pointerX = ptr.x
-    })
-    this.input.on(Phaser.Input.Events.POINTER_MOVE, (ptr: Phaser.Input.Pointer) => {
-      if (ptr.isDown) this.pointerX = ptr.x
-    })
-    this.input.on(Phaser.Input.Events.POINTER_UP, () => {
-      this.pointerDown = false
-    })
+    this.comboWidget?.updateMeter(
+      this.comboSystem.timeRemainingRatio,
+      this.comboSystem.tier.fxIntensity
+    )
+
+    for (let i = 0; i < this.fruits.length; i++) {
+      const cell = this.fruits[i]
+      if (!cell.active) {
+        continue
+      }
+
+      cell.elapsedMs += delta * cell.ripenRate
+      this.updateFruitVisual(cell)
+    }
+
+    this.refreshRipeCue()
   }
 
-  // ─── Game Over ────────────────────────────────────────────────────────────
+  private tapFruit(cell: FruitCell): void {
+    if (this.gameEnded || !cell.active) {
+      return
+    }
 
-  private triggerGameOver(): void {
-    this.isGameOver = true
-    this.spawnSystem.clear()
-    this.physics.pause()
+    const state = this.getFruitState(cell.elapsedMs)
+    cell.active = false
+    cell.hitArea.disableInteractive()
+    this.fruitsRemaining -= 1
 
-    // TODO: analytics hook — game_over, score: this.scoreSystem.getScore()
-
-    this.cameras.main.shake(300, 0.012)
-    this.time.delayedCall(600, () => {
-      this.cameras.main.fadeOut(BALANCING.sceneFadeDuration, 0, 0, 0)
-      this.cameras.main.once(
-        Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE,
-        () => {
-          this.scene.start('ResultScene', {
-            score: this.scoreSystem.getScore(),
-            highScore: this.scoreSystem.getHighScore(),
-            isNewHighScore: this.scoreSystem.isNewHighScore()
-          })
-        }
+    if (state === 2) {
+      this.perfectPops += 1
+      this.scoreSystem.add(this.levelConfig.perfectPoints)
+      const comboUpdate = this.comboSystem.increment()
+      this.spawnPopup(
+        cell.sprite.x,
+        cell.sprite.y - 4,
+        `+${this.levelConfig.perfectPoints} PERFECT!`,
+        POPUP_COLORS[state],
+        this.levelConfig.perfectPoints > 1 ? 1.05 : 1
       )
+      this.spawnSplatter(cell.sprite.x, cell.sprite.y, FRUIT_TINTS[state], 1.1)
+      this.popParticles?.explode(BALANCING.particleBurstCount, cell.sprite.x, cell.sprite.y)
+      this.cameras.main.flash(60, 255, 255, 255)
+      AudioManager.playSfx(this, 'sfx_perfect')
+      this.comboWidget?.onIncrement(comboUpdate)
+      this.comboFx?.onComboIncrease(comboUpdate, cell.sprite.x, cell.sprite.y)
+    } else if (state === 3) {
+      this.dirtMeter = Math.min(
+        BALANCING.dirtFailThreshold,
+        this.dirtMeter + this.levelConfig.dirtPerOverripe
+      )
+      const comboBreak = this.comboSystem.break('overripe_tap')
+      this.spawnPopup(
+        cell.sprite.x,
+        cell.sprite.y - 4,
+        `+${this.levelConfig.dirtPerOverripe} DIRT`,
+        POPUP_COLORS[state],
+        1
+      )
+      this.spawnSplatter(cell.sprite.x, cell.sprite.y, FRUIT_TINTS[state], 1.2)
+      this.popParticles?.explode(BALANCING.particleBurstCount, cell.sprite.x, cell.sprite.y)
+      this.cameras.main.shake(100, 0.0025)
+      AudioManager.playSfx(this, 'sfx_rotten')
+      if (comboBreak) {
+        this.comboWidget?.onBreak(comboBreak)
+        this.comboFx?.onComboBreak(comboBreak, cell.sprite.x, cell.sprite.y)
+      }
+    } else {
+      const comboBreak = this.comboSystem.break('wrong_tap')
+      this.spawnPopup(cell.sprite.x, cell.sprite.y - 4, POPUP_LABELS[state], POPUP_COLORS[state], 1)
+      this.spawnSplatter(cell.sprite.x, cell.sprite.y, FRUIT_TINTS[state], 0.95)
+      this.popParticles?.explode(BALANCING.particleBurstCount, cell.sprite.x, cell.sprite.y)
+      AudioManager.playSfx(this, 'sfx_pop')
+      if (comboBreak) {
+        this.comboWidget?.onBreak(comboBreak)
+        this.comboFx?.onComboBreak(comboBreak, cell.sprite.x, cell.sprite.y)
+      }
+    }
+
+    this.animateFruitRemoval(cell.sprite)
+    this.drawDirtMeter()
+    this.updatePerfectText()
+    this.refreshRipeCue()
+
+    if (this.dirtMeter >= BALANCING.dirtFailThreshold) {
+      this.endRound('lose', 'Too rotten')
+      return
+    }
+
+    if (this.fruitsRemaining <= 0) {
+      this.endRound('win', 'All fruit cleared')
+    }
+  }
+
+  private animateFruitRemoval(sprite: Phaser.GameObjects.Image): void {
+    this.tweens.add({
+      targets: sprite,
+      scaleX: 0,
+      scaleY: 0,
+      alpha: 0,
+      duration: BALANCING.popPunchDuration,
+      ease: 'Back.easeIn',
+      onComplete: () => {
+        sprite.setVisible(false)
+      }
     })
   }
 
-  // ─── Cleanup ──────────────────────────────────────────────────────────────
+  private spawnSplatter(x: number, y: number, tint: number, scale: number): void {
+    const entry = this.splatterPool.find((candidate) => !candidate.active)
+    if (!entry) {
+      return
+    }
+
+    entry.active = true
+    entry.image
+      .setPosition(x + Phaser.Math.Between(-4, 4), y + Phaser.Math.Between(-4, 4))
+      .setTint(tint)
+      .setScale(scale)
+      .setRotation(Phaser.Math.FloatBetween(-0.8, 0.8))
+      .setAlpha(0.85)
+      .setVisible(true)
+
+    this.tweens.add({
+      targets: entry.image,
+      alpha: 0,
+      scaleX: scale * BALANCING.splatScale,
+      scaleY: scale * BALANCING.splatScale,
+      duration: BALANCING.splatFadeDuration,
+      ease: 'Quad.easeOut',
+      onComplete: () => {
+        entry.image.setVisible(false)
+        entry.active = false
+      }
+    })
+  }
+
+  private spawnPopup(x: number, y: number, label: string, color: string, scale: number): void {
+    const entry = this.popupPool.find((candidate) => !candidate.active)
+    if (!entry) {
+      return
+    }
+
+    entry.active = true
+    entry.text
+      .setPosition(x, y)
+      .setText(label)
+      .setColor(color)
+      .setScale(scale)
+      .setAlpha(1)
+      .setVisible(true)
+
+    this.tweens.add({
+      targets: entry.text,
+      y: y - 34,
+      alpha: 0,
+      scaleX: scale * 1.08,
+      scaleY: scale * 1.08,
+      duration: BALANCING.popupDuration,
+      ease: 'Quad.easeOut',
+      onComplete: () => {
+        entry.text.setVisible(false)
+        entry.active = false
+      }
+    })
+  }
+
+  private updateHUD(force = false): void {
+    if (force) {
+      this.lastDirtValue = -1
+      this.lastPerfectValue = -1
+    }
+
+    this.updateTimer(force)
+    this.drawDirtMeter()
+    this.updatePerfectText()
+  }
+
+  private updateTimer(force = false): void {
+    this.topHud.setTimer(this.timerRemainingMs, force)
+    this.topHud.pulseTimer(this.timerRemainingMs)
+  }
+
+  private drawDirtMeter(): void {
+    if (this.dirtMeter === this.lastDirtValue) {
+      return
+    }
+
+    this.lastDirtValue = this.dirtMeter
+    const ratio = Phaser.Math.Clamp(this.dirtMeter / BALANCING.dirtFailThreshold, 0, 1)
+    this.topHud.setDirt(ratio, `${this.dirtMeter} / ${BALANCING.dirtFailThreshold}`, this.dirtMeter > 0)
+  }
+
+  private updatePerfectText(): void {
+    if (this.perfectPops === this.lastPerfectValue) {
+      return
+    }
+
+    this.lastPerfectValue = this.perfectPops
+    this.topHud.setPerfect(this.perfectPops, this.perfectPops > 0)
+  }
+
+  private endRound(outcome: FruitPopOutcome, reason: string): void {
+    if (this.gameEnded || this.resultQueued) {
+      return
+    }
+
+    this.gameEnded = true
+    this.resultQueued = true
+    pokiBridge.gameplayStop(outcome === 'win' ? 'round_end_win' : 'round_end_lose')
+
+    const comboBreak = this.comboSystem.break('round_end')
+    if (comboBreak) {
+      this.comboWidget?.onBreak(comboBreak)
+    }
+
+    for (let i = 0; i < this.fruits.length; i++) {
+      this.fruits[i].hitArea.disableInteractive()
+    }
+
+    if (outcome === 'win') {
+      this.cameras.main.flash(140, 255, 244, 224)
+      AudioManager.playSfx(this, 'sfx_win')
+    } else {
+      this.cameras.main.shake(180, 0.004)
+      AudioManager.playSfx(this, 'sfx_lose')
+    }
+
+    const score = this.scoreSystem.getScore()
+    const highScore = this.scoreSystem.getHighScore()
+    const isNewHighScore = this.scoreSystem.isNewHighScore()
+    const grade = this.getGrade(this.perfectPops, this.fruits.length)
+    const nextLevel = outcome === 'win' ? Math.min(this.level + 1, FRUIT_POP_MAX_LEVEL) : 1
+    const data: FruitPopResultData = {
+      level: this.level,
+      nextLevel,
+      outcome,
+      reason,
+      score,
+      perfectPops: this.perfectPops,
+      totalFruits: this.fruits.length,
+      highScore,
+      isNewHighScore,
+      grade
+    }
+
+    this.cameras.main.fadeOut(BALANCING.sceneFadeDuration, 0, 0, 0)
+    this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      this.scene.start('ResultScene', data)
+    })
+  }
+
+  private getGrade(perfectPops: number, totalFruits: number): FruitPopGrade {
+    if (perfectPops >= totalFruits) return 'S'
+    const ratio = totalFruits > 0 ? perfectPops / totalFruits : 0
+    if (ratio >= 0.7) return 'A'
+    if (ratio >= 0.5) return 'B'
+    if (ratio >= 0.3) return 'C'
+    return 'D'
+  }
 
   shutdown(): void {
-    this.spawnSystem.clear()
-    this.escapeKey?.destroy()
-    this.input.off(Phaser.Input.Events.POINTER_DOWN)
-    this.input.off(Phaser.Input.Events.POINTER_MOVE)
-    this.input.off(Phaser.Input.Events.POINTER_UP)
+    pokiBridge.gameplayStop('scene_shutdown')
+    this.comboFx?.destroy()
+    this.comboFx = null
+    if (this.ripeCue) {
+      this.ripeCue.destroy()
+    }
+    if (this.topHud) {
+      this.topHud.destroy()
+    }
+    if (this.comboWidget) {
+      this.tweens.killTweensOf(this.comboWidget)
+      this.comboWidget.destroy()
+      this.comboWidget = null
+    }
+    this.destroyPools()
+    this.destroyParticles()
+  }
+
+  private destroyPools(): void {
+    for (const entry of this.splatterPool) {
+      this.tweens.killTweensOf(entry.image)
+      entry.image.destroy()
+    }
+
+    for (const entry of this.popupPool) {
+      this.tweens.killTweensOf(entry.text)
+      entry.text.destroy()
+    }
+
+    this.splatterPool = []
+    this.popupPool = []
+  }
+
+  private destroyParticles(): void {
+    if (!this.popParticles) {
+      return
+    }
+
+    this.popParticles.destroy()
+    this.popParticles = null
+  }
+
+  private refreshRipeCue(): void {
+    if (!this.ripeCue) {
+      return
+    }
+
+    let primary: FruitCell | null = null
+    let bestDistance = Number.POSITIVE_INFINITY
+
+    for (let i = 0; i < this.fruits.length; i++) {
+      const cell = this.fruits[i]
+      if (!cell.active || this.getFruitState(cell.elapsedMs) !== 2) {
+        continue
+      }
+
+      const dx = cell.sprite.x - this.boardCenterX
+      const dy = cell.sprite.y - this.boardCenterY
+      const distance = dx * dx + dy * dy
+      if (distance < bestDistance) {
+        bestDistance = distance
+        primary = cell
+      }
+    }
+
+    if (!primary) {
+      this.ripeCue.hide()
+      return
+    }
+
+    this.ripeCue.show(primary.sprite.x, primary.sprite.y, this.ripeCueBaseSize)
   }
 }

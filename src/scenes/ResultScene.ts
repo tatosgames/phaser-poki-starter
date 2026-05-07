@@ -1,34 +1,31 @@
 /**
  * ResultScene.ts
- * End-of-game screen showing:
- * - Final score
- * - High score (highlighted if new record)
- * - Restart button → GameScene
- * - Menu button → MenuScene
- * - Rewarded ad hook placeholder (TODO)
- *
- * Receives data from GameScene via scene.start('ResultScene', { score, highScore, isNewHighScore })
+ * Fruit Pop end screen for win/lose outcomes.
  */
 
 import { UIButton } from '../components/UIButton'
 import { config } from '../core/Config'
+import { getViewportLayout, type ViewportLayout } from '../core/ViewportLayout'
 import { GAME_CONFIG } from '../data/gameConfig'
-import { BALANCING } from '../data/balancing'
+import { BALANCING, FRUIT_POP_MAX_LEVEL, getFruitPopLevel } from '../data/balancing'
 import { formatScore } from '../utils/helpers'
+import type { FruitPopResultData } from '../types/fruitPop'
 
-// Data passed from GameScene
-interface ResultData {
-  score: number
-  highScore: number
-  isNewHighScore: boolean
+const DEFAULT_RESULT: FruitPopResultData = {
+  level: 1,
+  nextLevel: 1,
+  outcome: 'lose',
+  reason: "Time's up",
+  score: 0,
+  perfectPops: 0,
+  totalFruits: 15,
+  highScore: 0,
+  isNewHighScore: false,
+  grade: 'D'
 }
 
-const CX = GAME_CONFIG.width / 2
-const CY = GAME_CONFIG.height / 2
-
 export class ResultScene extends Phaser.Scene {
-  private resultData: ResultData = { score: 0, highScore: 0, isNewHighScore: false }
-
+  private resultData: FruitPopResultData = DEFAULT_RESULT
   private enterKey!: Phaser.Input.Keyboard.Key
   private rKey!: Phaser.Input.Keyboard.Key
 
@@ -36,122 +33,191 @@ export class ResultScene extends Phaser.Scene {
     super({ key: 'ResultScene' })
   }
 
-  init(data: ResultData): void {
+  init(data: FruitPopResultData): void {
     this.resultData = {
-      score: data?.score ?? 0,
-      highScore: data?.highScore ?? 0,
-      isNewHighScore: data?.isNewHighScore ?? false
+      ...DEFAULT_RESULT,
+      ...data
     }
   }
 
   create(): void {
+    const layout = getViewportLayout()
     this.cameras.main.setBackgroundColor(config.game.backgroundColor)
     this.cameras.main.fadeIn(BALANCING.sceneFadeDuration, 0, 0, 0)
 
-    this.createBackground()
-    this.createScoreDisplay()
-    this.createButtons()
+    this.createBackground(layout)
+    this.createSummary(layout)
+    this.createButtons(layout)
     this.setupKeyboard()
 
-    // TODO: rewarded break hook
-    // Uncomment to offer a rewarded ad after a short delay:
-    //
-    // this.time.delayedCall(500, () => {
-    //   const poki = this.plugins.get('poki') as PokiPlugin
-    //   poki.rewardedBreak().then((rewarded) => {
-    //     if (rewarded) {
-    //       // Give the player an extra life, double score, etc.
-    //     }
-    //   })
-    // })
-
-    // TODO: analytics hook — result_screen_shown, score: this.resultData.score
+    // TODO: analytics hook - result_screen_shown
   }
 
-  // ─── UI ───────────────────────────────────────────────────────────────────
-
-  private createBackground(): void {
+  private createBackground(layout: ViewportLayout): void {
     const bg = this.add.graphics()
-    bg.fillGradientStyle(0x1a1a2e, 0x1a1a2e, 0x16213e, 0x16213e, 1)
+    const isWin = this.resultData.outcome === 'win'
+
+    bg.fillGradientStyle(
+      isWin ? 0xf7ead4 : 0xf1dbcc,
+      isWin ? 0xf7ead4 : 0xf1dbcc,
+      isWin ? 0xe9f4dc : 0xe9d7d0,
+      isWin ? 0xe7f0ff : 0xded4ca,
+      1
+    )
     bg.fillRect(0, 0, GAME_CONFIG.width, GAME_CONFIG.height)
+
+    bg.fillStyle(isWin ? 0x7ccf5b : 0x7a4b35, 0.1)
+    bg.fillCircle(layout.cx - 110, 180, 170)
+    bg.fillStyle(isWin ? 0xffb18f : 0x5f4b2c, 0.1)
+    bg.fillCircle(layout.cx + 90, GAME_CONFIG.height - 180, 200)
   }
 
-  private createScoreDisplay(): void {
-    const { score, highScore, isNewHighScore } = this.resultData
+  private createSummary(layout: ViewportLayout): void {
+    const { level, outcome, reason, score, perfectPops, highScore, isNewHighScore, grade } =
+      this.resultData
+    const isWin = outcome === 'win'
+    const levelConfig = getFruitPopLevel(level)
+    const headline = isWin ? 'HARVEST COMPLETE' : 'ROUND OVER'
+    const accent = isWin ? '#7ccf5b' : '#d95a4e'
 
-    // "Game Over" header
+    const topY = layout.isLandscape ? 86 : layout.cy - 232
+    const cardY = layout.isLandscape ? 238 : layout.cy - 32
+    const cardHeight = layout.isLandscape ? 220 : 262
+
     this.add
-      .text(CX, CY - 210, 'GAME OVER', {
-        fontSize: '42px',
+      .text(layout.cx, topY, `LEVEL ${level} / ${FRUIT_POP_MAX_LEVEL}`, {
+        fontSize: '24px',
         fontFamily: 'Arial, sans-serif',
-        color: '#e74c3c',
+        color: '#7a3e2c',
         fontStyle: 'bold',
         resolution: 2
       })
       .setOrigin(0.5)
 
-    // Score card background
-    const cardH = 160
-    const card = this.add.graphics()
-    card.fillStyle(0x16213e, 0.8)
-    card.fillRoundedRect(CX - 160, CY - 165, 320, cardH, 16)
-    card.lineStyle(2, 0x4a90d9, 0.4)
-    card.strokeRoundedRect(CX - 160, CY - 165, 320, cardH, 16)
-
-    // Score label
     this.add
-      .text(CX, CY - 140, 'Score', {
+      .text(layout.cx, topY + 30, levelConfig.label, {
+        fontSize: '18px',
+        fontFamily: 'Arial, sans-serif',
+        color: '#8c7352',
+        resolution: 2
+      })
+      .setOrigin(0.5)
+
+    this.add
+      .text(layout.cx, topY + 56, `BOARD ${levelConfig.boardLabel}`, {
         fontSize: '16px',
         fontFamily: 'Arial, sans-serif',
-        color: '#aaaacc',
+        color: '#8c7352',
         resolution: 2
       })
       .setOrigin(0.5)
 
-    // Score value
-    const scoreColor = isNewHighScore ? '#f1c40f' : '#ffffff'
-    const scoreDisplay = this.add
-      .text(CX, CY - 110, formatScore(score), {
-        fontSize: '52px',
+    this.add
+      .text(layout.cx, topY + 82, isWin ? 'WIN' : 'LOSE', {
+        fontSize: '42px',
         fontFamily: 'Arial, sans-serif',
-        color: scoreColor,
+        color: accent,
+        fontStyle: 'bold',
+        resolution: 2,
+        stroke: '#ffffff',
+        strokeThickness: 4
+      })
+      .setOrigin(0.5)
+
+    this.add
+      .text(layout.cx, topY + 128, headline, {
+        fontSize: '24px',
+        fontFamily: 'Arial, sans-serif',
+        color: '#7a3e2c',
         fontStyle: 'bold',
         resolution: 2
       })
       .setOrigin(0.5)
 
-    // Animate score counting up (optional but satisfying)
+    this.add
+      .text(layout.cx, topY + 160, reason, {
+        fontSize: '18px',
+        fontFamily: 'Arial, sans-serif',
+        color: '#8c7352',
+        resolution: 2
+      })
+      .setOrigin(0.5)
+
+    const card = this.add.graphics()
+    card.fillStyle(0xffffff, 0.72)
+    card.fillRoundedRect(layout.cx - 165, cardY, 330, cardHeight, 18)
+    card.lineStyle(2, accent === '#7ccf5b' ? 0x7ccf5b : 0xd95a4e, 0.35)
+    card.strokeRoundedRect(layout.cx - 165, cardY, 330, cardHeight, 18)
+
+    this.add
+      .text(layout.cx, cardY + 28, 'Score', {
+        fontSize: '16px',
+        fontFamily: 'Arial, sans-serif',
+        color: '#8c7352',
+        resolution: 2
+      })
+      .setOrigin(0.5)
+
+    const scoreValue = this.add
+      .text(layout.cx, cardY + 56, formatScore(score), {
+        fontSize: '54px',
+        fontFamily: 'Arial, sans-serif',
+        color: accent,
+        fontStyle: 'bold',
+        resolution: 2
+      })
+      .setOrigin(0.5)
+
     if (score > 0) {
       let displayed = 0
-      const increment = Math.ceil(score / 40)
+      const increment = Math.max(1, Math.ceil(score / 40))
       const counter = this.time.addEvent({
         delay: 30,
         repeat: 40,
         callback: () => {
           displayed = Math.min(score, displayed + increment)
-          scoreDisplay.setText(formatScore(displayed))
-          if (displayed >= score) counter.remove()
+          scoreValue.setText(formatScore(displayed))
+          if (displayed >= score) {
+            counter.remove()
+          }
         }
       })
     }
 
-    // New high score banner
+    this.add
+      .text(layout.cx, cardY + 116, `Perfect Pops: ${perfectPops}`, {
+        fontSize: '18px',
+        fontFamily: 'Arial, sans-serif',
+        color: '#7a3e2c',
+        resolution: 2
+      })
+      .setOrigin(0.5)
+
+    this.add
+      .text(layout.cx, cardY + 146, `Grade: ${grade}`, {
+        fontSize: '18px',
+        fontFamily: 'Arial, sans-serif',
+        color: isWin ? '#7ccf5b' : '#d95a4e',
+        fontStyle: 'bold',
+        resolution: 2
+      })
+      .setOrigin(0.5)
+
     if (isNewHighScore) {
       const banner = this.add
-        .text(CX, CY - 55, '🏆 NEW BEST!', {
+        .text(layout.cx, cardY + 176, 'NEW BEST!', {
           fontSize: '20px',
           fontFamily: 'Arial, sans-serif',
-          color: '#f1c40f',
+          color: '#f26b5d',
           fontStyle: 'bold',
           resolution: 2
         })
         .setOrigin(0.5)
 
-      // Pulse animation
       this.tweens.add({
         targets: banner,
-        scaleX: 1.1,
-        scaleY: 1.1,
+        scaleX: 1.08,
+        scaleY: 1.08,
         duration: 500,
         yoyo: true,
         repeat: -1,
@@ -159,49 +225,52 @@ export class ResultScene extends Phaser.Scene {
       })
     } else if (highScore > 0) {
       this.add
-        .text(CX, CY - 55, `Best: ${formatScore(highScore)}`, {
+        .text(layout.cx, cardY + 176, `Best: ${formatScore(highScore)}`, {
           fontSize: '16px',
           fontFamily: 'Arial, sans-serif',
-          color: '#aaaacc',
+          color: '#8c7352',
           resolution: 2
         })
         .setOrigin(0.5)
     }
   }
 
-  private createButtons(): void {
-    // ── Play Again ───────────────────────────────────────────────────────────
+  private createButtons(layout: ViewportLayout): void {
+    const primaryLabel =
+      this.resultData.outcome === 'win' && this.resultData.nextLevel > this.resultData.level
+        ? 'NEXT LEVEL'
+        : this.resultData.outcome === 'win'
+          ? 'REPLAY'
+          : 'TRY AGAIN'
+
     new UIButton({
       scene: this,
-      x: CX,
-      y: CY + 30,
+      x: layout.cx,
+      y: layout.isLandscape ? 700 : layout.cy + 196,
       width: 240,
       height: 64,
-      label: 'PLAY AGAIN',
+      label: primaryLabel,
       fontSize: 24,
-      color: 0x4a90d9,
-      hoverColor: 0x5ba3f5,
-      pressColor: 0x357abd,
+      color: 0xf26b5d,
+      hoverColor: 0xff7f73,
+      pressColor: 0xd95a4e,
       onClick: () => this.restartGame()
     })
 
-    // ── Main Menu ────────────────────────────────────────────────────────────
     new UIButton({
       scene: this,
-      x: CX,
-      y: CY + 110,
+      x: layout.cx,
+      y: layout.isLandscape ? 772 : layout.cy + 274,
       width: 200,
       height: 52,
       label: 'MENU',
       fontSize: 20,
-      color: 0x2c3e50,
-      hoverColor: 0x3d5166,
-      pressColor: 0x1a252f,
+      color: 0x8c7352,
+      hoverColor: 0xa28967,
+      pressColor: 0x6d5740,
       onClick: () => this.goToMenu()
     })
   }
-
-  // ─── Keyboard ─────────────────────────────────────────────────────────────
 
   private setupKeyboard(): void {
     this.enterKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER)
@@ -211,26 +280,22 @@ export class ResultScene extends Phaser.Scene {
     this.rKey.on('down', this.restartGame, this)
   }
 
-  // ─── Navigation ───────────────────────────────────────────────────────────
-
   private restartGame(): void {
-    // TODO: analytics hook — game_restarted
+    // TODO: analytics hook - game_restarted
+    const nextLevel =
+      this.resultData.outcome === 'win' ? this.resultData.nextLevel : 1
     this.cameras.main.fadeOut(BALANCING.sceneFadeDuration, 0, 0, 0)
-    this.cameras.main.once(
-      Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE,
-      () => this.scene.start('GameScene')
-    )
+    this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      this.scene.start('CountdownScene', { level: nextLevel })
+    })
   }
 
   private goToMenu(): void {
     this.cameras.main.fadeOut(BALANCING.sceneFadeDuration, 0, 0, 0)
-    this.cameras.main.once(
-      Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE,
-      () => this.scene.start('MenuScene')
-    )
+    this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      this.scene.start('MenuScene')
+    })
   }
-
-  // ─── Cleanup ──────────────────────────────────────────────────────────────
 
   shutdown(): void {
     this.enterKey?.destroy()

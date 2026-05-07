@@ -1,146 +1,208 @@
 /**
  * MenuScene.ts
- * Title screen with:
- * - Game title and tagline
- * - Play button → starts GameScene
- * - Mute toggle button (state persisted via AudioManager / SaveManager)
- * - Mobile-friendly layout (all touch targets ≥ 44px)
- * - Keyboard: Enter/Space → play, Escape → toggle mute
+ * Fruit Pop title screen.
+ *
+ * Responsibilities:
+ * - Animated fruit backdrop
+ * - Play button -> CountdownScene
+ * - Mute toggle button
+ * - Saved best score display
  */
 
 import { UIButton } from '../components/UIButton'
+import { RipenessGuide } from '../components/RipenessGuide'
 import { AudioManager } from '../core/AudioManager'
 import { SaveManager, SAVE_KEYS } from '../core/SaveManager'
 import { config } from '../core/Config'
+import { ScaleManager } from '../core/ScaleManager'
+import { getViewportLayout, type ViewportLayout } from '../core/ViewportLayout'
 import { GAME_CONFIG } from '../data/gameConfig'
 import { BALANCING } from '../data/balancing'
+import { pokiBridge } from '../lib/poki/PokiBridge'
 
-const CX = GAME_CONFIG.width / 2
-const CY = GAME_CONFIG.height / 2
+const BACKDROP_COLORS = [0xffc857, 0xff8c42, 0xf26b5d, 0x7ccf5b, 0x89c2ff]
 
 export class MenuScene extends Phaser.Scene {
   private muteButton!: UIButton
+  private ripenessGuide: RipenessGuide | null = null
   private enterKey!: Phaser.Input.Keyboard.Key
   private spaceKey!: Phaser.Input.Keyboard.Key
   private escapeKey!: Phaser.Input.Keyboard.Key
+  private menuProfile!: MenuProfile
 
   constructor() {
     super({ key: 'MenuScene' })
   }
 
   create(): void {
+    const layout = getViewportLayout()
+    this.menuProfile = this.getMenuProfile(layout)
     this.cameras.main.setBackgroundColor(config.game.backgroundColor)
     this.cameras.main.fadeIn(BALANCING.sceneFadeDuration, 0, 0, 0)
+    pokiBridge.init(this)
 
-    this.createBackground()
-    this.createTitle()
-    this.createButtons()
-    this.createFooter()
+    this.createBackground(layout)
+    this.createBackdropFruitGrid(layout)
+    this.createTitle(layout)
+    this.createRipenessGuide(layout)
+    this.createButtons(layout)
+    this.createFooter(layout)
     this.setupKeyboard()
 
-    // TODO: analytics hook — menu_viewed
+    // TODO: analytics hook - menu_viewed
   }
 
-  // ─── UI Construction ───────────────────────────────────────────────────────
-
-  private createBackground(): void {
+  private createBackground(layout: ViewportLayout): void {
     const bg = this.add.graphics()
-
-    // Gradient background
-    bg.fillGradientStyle(0x1a1a2e, 0x1a1a2e, 0x16213e, 0x16213e, 1)
+    bg.fillGradientStyle(0xf7ead4, 0xf7ead4, 0xe9f4dc, 0xe7f0ff, 1)
     bg.fillRect(0, 0, GAME_CONFIG.width, GAME_CONFIG.height)
 
-    // Decorative circles (replace with real art)
-    bg.fillStyle(0x4a90d9, 0.06)
-    bg.fillCircle(CX - 120, 160, 190)
-    bg.fillStyle(0xe74c3c, 0.05)
-    bg.fillCircle(CX + 100, GAME_CONFIG.height - 180, 230)
+    bg.fillStyle(0xffffff, 0.1)
+    bg.fillCircle(layout.cx - 140, 160, 180)
+    bg.fillStyle(0xffb18f, 0.08)
+    bg.fillCircle(layout.cx + 120, GAME_CONFIG.height - 160, 210)
   }
 
-  private createTitle(): void {
-    // Main title
+  private createBackdropFruitGrid(layout: ViewportLayout): void {
+    const cols = 4
+    const rows = 3
+    const startX = layout.isLandscape ? 42 : this.menuProfile.isCompact ? 70 : 82
+    const startY = layout.isLandscape ? 112 : this.menuProfile.isCompact ? 156 : 170
+    const gapX = layout.isLandscape ? 90 : this.menuProfile.isCompact ? 90 : 98
+    const gapY = layout.isLandscape ? 102 : this.menuProfile.isCompact ? 110 : 120
+
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const fruit = this.add.image(startX + col * gapX, startY + row * gapY, 'fruit')
+        fruit.setDisplaySize(54, 54)
+        fruit.setAlpha(0.18)
+        fruit.setTint(BACKDROP_COLORS[(row + col) % BACKDROP_COLORS.length])
+        fruit.setRotation((row - col) * 0.04)
+
+        this.tweens.add({
+          targets: fruit,
+          scaleX: 1.06,
+          scaleY: 1.06,
+          duration: 1800 + row * 120,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+          delay: (row + col) * 90
+        })
+      }
+    }
+  }
+
+  private createTitle(layout: ViewportLayout): void {
+    const titleY = this.menuProfile.titleY
+    const subtitleY = this.menuProfile.subtitleY
+    const titleSize = this.menuProfile.titleFontSize
+    const subtitleSize = this.menuProfile.subtitleFontSize
+
     this.add
-      .text(CX, CY - 165, config.game.title, {
-        fontSize: '52px',
+      .text(layout.cx, titleY, config.game.title, {
+        fontSize: titleSize,
         fontFamily: 'Arial, sans-serif',
-        color: '#ffffff',
+        color: '#7a3e2c',
         fontStyle: 'bold',
         resolution: 2,
-        stroke: '#4a90d9',
-        strokeThickness: 3
+        stroke: '#ffffff',
+        strokeThickness: 4
       })
       .setOrigin(0.5)
 
-    // Tagline — replace with your game's actual tagline
     this.add
-      .text(CX, CY - 100, 'Tap to survive', {
-        fontSize: '20px',
+      .text(layout.cx, subtitleY, 'Tap fruit at peak ripeness', {
+        fontSize: subtitleSize,
         fontFamily: 'Arial, sans-serif',
-        color: '#aaaacc',
+        color: '#8c7352',
         resolution: 2
       })
       .setOrigin(0.5)
   }
 
-  private createButtons(): void {
-    // ── Play Button ──────────────────────────────────────────────────────────
+  private createRipenessGuide(layout: ViewportLayout): void {
+    this.ripenessGuide = new RipenessGuide({
+      scene: this,
+      x: layout.cx,
+      y: this.menuProfile.guideY,
+      stages: ['green', 'yellow', 'orange', 'red', 'rotten'],
+      targetStage: 'red',
+      animationEnabled: true,
+      stageSpacing: this.menuProfile.guideSpacing
+    })
+  }
+
+  private createButtons(layout: ViewportLayout): void {
+    const playY = this.menuProfile.playY
+    const muteY = this.menuProfile.muteY
+    const playWidth = this.menuProfile.playWidth
+    const playFont = this.menuProfile.playFontSize
+    const muteWidth = this.menuProfile.muteWidth
+    const muteFont = this.menuProfile.muteFontSize
+
     new UIButton({
       scene: this,
-      x: CX,
-      y: CY + 10,
-      width: 240,
+      x: layout.cx,
+      y: playY,
+      width: playWidth,
       height: 64,
       label: 'PLAY',
-      fontSize: 26,
-      color: 0x4a90d9,
-      hoverColor: 0x5ba3f5,
-      pressColor: 0x357abd,
+      fontSize: playFont,
+      color: 0xf26b5d,
+      hoverColor: 0xff7f73,
+      pressColor: 0xd95a4e,
       onClick: () => this.startGame()
     })
 
-    // ── Mute Toggle ──────────────────────────────────────────────────────────
-    const muteLabel = AudioManager.muted ? '🔇 Muted' : '🔊 Sound On'
+    const muteLabel = AudioManager.muted ? 'Muted' : 'Sound On'
     this.muteButton = new UIButton({
       scene: this,
-      x: CX,
-      y: CY + 90,
-      width: 180,
+      x: layout.cx,
+      y: muteY,
+      width: muteWidth,
       height: 48,
       label: muteLabel,
-      fontSize: 18,
-      color: 0x2c3e50,
-      hoverColor: 0x3d5166,
-      pressColor: 0x1a252f,
+      fontSize: muteFont,
+      color: 0x8c7352,
+      hoverColor: 0xa28967,
+      pressColor: 0x6d5740,
       onClick: () => this.toggleMute()
     })
   }
 
-  private createFooter(): void {
-    // High score display
+  private createFooter(layout: ViewportLayout): void {
+    const footerY = this.menuProfile.footerY
     const hs = SaveManager.load<number>(SAVE_KEYS.highScore, 0)
     if (hs > 0) {
       this.add
-        .text(CX, CY + 165, `Best: ${hs.toLocaleString()}`, {
+        .text(layout.cx, footerY, `Best Harvest: ${hs.toLocaleString()}`, {
           fontSize: '18px',
           fontFamily: 'Arial, sans-serif',
-          color: '#f1c40f',
+          color: '#7a3e2c',
+          resolution: 2
+        })
+        .setOrigin(0.5)
+    } else {
+      this.add
+        .text(layout.cx, footerY, 'One tap at a time.', {
+          fontSize: '18px',
+          fontFamily: 'Arial, sans-serif',
+          color: '#7a3e2c',
           resolution: 2
         })
         .setOrigin(0.5)
     }
 
-    // Version stamp
     this.add
-      .text(CX, GAME_CONFIG.height - 20, `v${config.game.version}`, {
+      .text(layout.cx, layout.footerBottom, `v${config.game.version}`, {
         fontSize: '12px',
         fontFamily: 'Arial, sans-serif',
-        color: '#444466',
+        color: '#8c7352',
         resolution: 2
       })
       .setOrigin(0.5)
   }
-
-  // ─── Keyboard Input ───────────────────────────────────────────────────────
 
   private setupKeyboard(): void {
     this.enterKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER)
@@ -152,27 +214,77 @@ export class MenuScene extends Phaser.Scene {
     this.escapeKey.on('down', this.toggleMute, this)
   }
 
-  // ─── Actions ──────────────────────────────────────────────────────────────
-
   private startGame(): void {
-    // TODO: analytics hook — game_started
+    // TODO: analytics hook - game_started
+    pokiBridge.gameplayStart('play_button')
     this.cameras.main.fadeOut(BALANCING.sceneFadeDuration, 0, 0, 0)
     this.cameras.main.once(
       Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE,
-      () => this.scene.start('GameScene')
+      () => this.scene.start('CountdownScene', { level: 1 })
     )
   }
 
   private toggleMute(): void {
     const nowMuted = AudioManager.toggleMute()
-    this.muteButton.setText(nowMuted ? '🔇 Muted' : '🔊 Sound On')
+    this.muteButton.setText(nowMuted ? 'Muted' : 'Sound On')
   }
 
-  // ─── Cleanup ──────────────────────────────────────────────────────────────
-
   shutdown(): void {
+    if (this.ripenessGuide) {
+      this.ripenessGuide.destroy()
+      this.ripenessGuide = null
+    }
     this.enterKey?.destroy()
     this.spaceKey?.destroy()
     this.escapeKey?.destroy()
   }
+
+  private getMenuProfile(layout: ViewportLayout): MenuProfile {
+    const viewportWidth = ScaleManager.viewportWidth
+    const viewportHeight = ScaleManager.viewportHeight
+    const isCompact = viewportWidth <= 360 || viewportHeight <= 700 || (layout.isLandscape && viewportHeight <= 500)
+    const isTightLandscape = layout.isLandscape && viewportWidth <= 700
+
+    const titleY = layout.isLandscape ? (isTightLandscape ? 148 : 160) : isCompact ? 160 : 176
+    const subtitleY = titleY + (layout.isLandscape ? 46 : 60)
+    const guideSpacing = layout.isLandscape ? (isTightLandscape ? 36 : 40) : isCompact ? 42 : 48
+    const guideY = subtitleY + (layout.isLandscape ? 38 : isCompact ? 44 : 48)
+    const playY = guideY + (layout.isLandscape ? 68 : isCompact ? 78 : 92)
+    const muteY = playY + (isCompact ? 66 : 78)
+    const footerY = muteY + (isCompact ? 72 : 84)
+
+    return {
+      isCompact,
+      titleY,
+      subtitleY,
+      guideY,
+      guideSpacing,
+      playY,
+      playWidth: layout.isLandscape ? (isTightLandscape ? 220 : 230) : isCompact ? 220 : 240,
+      playFontSize: layout.isLandscape ? (isTightLandscape ? 24 : 26) : isCompact ? 24 : 26,
+      muteY,
+      muteWidth: layout.isLandscape ? 170 : isCompact ? 170 : 180,
+      muteFontSize: isCompact ? 17 : 18,
+      footerY,
+      subtitleFontSize: isCompact ? '18px' : '20px',
+      titleFontSize: layout.isLandscape ? (isTightLandscape ? '48px' : '50px') : isCompact ? '50px' : '54px'
+    }
+  }
+}
+
+interface MenuProfile {
+  isCompact: boolean
+  titleY: number
+  subtitleY: number
+  guideY: number
+  guideSpacing: number
+  playY: number
+  playWidth: number
+  playFontSize: number
+  muteY: number
+  muteWidth: number
+  muteFontSize: number
+  footerY: number
+  subtitleFontSize: string
+  titleFontSize: string
 }

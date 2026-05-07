@@ -1,130 +1,309 @@
-# Phaser 3 + Poki Starter Template
+# Fruit Pop
 
-A production-ready starter framework for casual browser games built with **Phaser 3**, **TypeScript**, and **Vite**, with **Poki SDK** integration built in from day one.
+**Stack:** Phaser 3, TypeScript, Vite, Poki SDK
+**Target platform:** Web, desktop + mobile, portrait-first
+**Session length:** about 60 to 90 seconds
 
-## Quick Start (under 5 minutes)
+Fruit Pop is a single-screen tap game about timing. A grid of fruits slowly ripens, and the player must pop them at the right moment before the kitchen fills with dirt and the round ends.
 
-```bash
-# 1. Clone or download this template
-git clone <your-repo-url> my-game
-cd my-game
+The core tension is simple: pop too early and you waste potential, pop too late and the fruit goes rotten. Good timing gives satisfying feedback, score, and momentum.
 
-# 2. Install dependencies
-npm install
+## Core Loop
 
-# 3. Start the dev server
-npm run dev
+1. Spawn a fruit grid.
+2. Fruits automatically ripen over time.
+3. The player taps a fruit.
+4. The result depends on ripeness:
+   - too early: no reward
+   - perfect: big reward
+   - overripe: dirt penalty
+5. Clear all fruit to win.
+6. Reach the timer limit or dirt limit to lose.
+
+## Controls
+
+| Input | Behavior |
+|---|---|
+| Tap / Click | Pop the targeted fruit |
+| No drag, no swipe, no hold | The game is tap-only |
+
+Hitboxes should feel generous. The design target is an interactive area about 1.3x the visible fruit size.
+
+## Game States
+
+| State | Purpose |
+|---|---|
+| Menu | Animated fruit grid, logo, start prompt, best score |
+| Countdown | 3-2-1-GO intro before active play |
+| Game | Active ripening, tapping, dirt management, timer |
+| Result: WIN | Clear-state celebration, score breakdown, replay |
+| Result: LOSE | Failure state, reason text, retry |
+
+## Entities
+
+### Fruit Object
+
+```js
+{
+  id,
+  x,
+  y,
+  state,        // 0 = Green, 1 = Yellow, 2 = Red, 3 = Overripe
+  stateTimer,
+  isActive,
+  wobblePhase,
+  pulseSpeed,
+  popCharge
+}
 ```
 
-Open `http://localhost:3000` — you'll see the full scene flow: Boot → Preload → Menu → Game → Result.
+### Runtime Game State
 
-## Build for Production
-
-```bash
-npm run build
+```js
+{
+  timer,
+  dirtMeter,
+  remainingFruits,
+  perfectPops,
+  totalPops,
+  comboChain,
+  roundSeed
+}
 ```
 
-Output goes to `dist/`. Upload the entire `dist/` folder to Poki or any static host.
+### Visual Pool Objects
 
-## Project Structure
+```js
+// Splatter decal
+{
+  x, y, scale, rotation, alpha, lifetime, color, isActive
+}
 
-```
-/src
-  /core
-    Config.ts           — Typed game config interface and default values
-    ScaleManager.ts     — Responsive canvas scaling (portrait-first, 9:16)
-    AudioManager.ts     — Global mute/unmute, browser audio unlock, SFX/music control
-    SaveManager.ts      — localStorage wrapper with typed save/load and silent error handling
-  /scenes
-    BootScene.ts        — Initializes core services, detects environment, routes to PreloadScene
-    PreloadScene.ts     — Loads all assets with progress bar; plugin fires gameLoadingFinished
-    MenuScene.ts        — Title screen with Play button and mute toggle
-    GameScene.ts        — Placeholder gameplay loop with all systems wired up
-    ResultScene.ts      — Score display, restart + menu buttons; rewarded ad hook placeholder
-  /components
-    UIButton.ts         — Reusable Phaser button with hover/press states and keyboard support
-    ProgressBar.ts      — Reusable loading progress bar
-  /systems
-    ScoreSystem.ts      — Add/reset/get score; high score persisted via SaveManager
-    DifficultySystem.ts — Time-based difficulty multiplier driven by balancing.ts
-    SpawnSystem.ts      — Timed spawn controller integrated with the game loop
-  /data
-    gameConfig.ts       — Single source of truth: dimensions, colors, debug flags
-    balancing.ts        — All tunable numbers: spawn rates, difficulty ramp, points
-  /utils
-    helpers.ts          — Shared utility functions (random, clamp, format, etc.)
-  main.ts               — Phaser game bootstrap with Poki plugin config
-/public
-  /assets               — Game assets (add your images, audio, spritesheets here)
-index.html              — Entry HTML with correct mobile viewport meta tags
+// Pop particle
+{
+  x, y, velocityX, velocityY, alpha, scale, lifetime, isActive
+}
+
+// Score popup text
+{
+  x, y, text, velocityY, alpha, lifetime, isActive
+}
 ```
 
-## Poki SDK Integration
+## Mechanics
 
-The `PokiPlugin` is registered globally in `main.ts`. It automatically:
+### Ripeness System
 
-- Fires `gameLoadingFinished` when `PreloadScene` finishes loading
-- Fires `gameplayStart` when `GameScene` starts
-- Fires `gameplayStop` when `GameScene` stops
-- Disables input and audio during ad breaks
+Each fruit advances through four states:
 
-### Rewarded Ads
+| State | Name | Color | Time Window | Visual |
+|---|---|---|---|---|
+| 0 | Green | `#4CAF50` | 0 to 2500 ms | Small, firm |
+| 1 | Yellow | `#FFC107` | 2500 to 5000 ms | Medium, slight wobble |
+| 2 | Red | `#E53935` | 5000 to 7500 ms | Large, glowing, pulsing |
+| 3 | Overripe | `#4E342E` | 7500 ms+ | Shrinking, dripping |
 
-In `ResultScene.ts`, look for the `// TODO: rewarded break hook` comment and add:
+Each fruit should have a small random timing variance so the board does not ripen uniformly.
 
-```ts
-const poki = this.plugins.get('poki') as PokiPlugin
-poki.rewardedBreak().then((rewarded) => {
-  if (rewarded) {
-    // Give the player their reward
-  }
-})
+### Tap Outcomes
+
+| State at tap | Outcome | Dirt Change | Score | Feedback |
+|---|---|---|---|---|
+| Green | Remove fruit | No change | 0 | Small green puff |
+| Yellow | Remove fruit | No change | 0 | Medium yellow burst |
+| Red | Remove fruit | No change | +1 perfect | Large explosion and screen flash |
+| Overripe | Remove fruit | +20 dirt | 0 | Brown splatter and shake |
+
+There is no "miss" state. Every tap removes the fruit. The cost of bad timing is dirt, not failed input.
+
+### Dirt Meter
+
+- Starts at 0
+- Increases by 20 per overripe pop
+- Fails at 100
+- Does not decay
+- Should read clearly in the HUD as a grime or sludge bar
+
+### Timer
+
+- Starts at 35 seconds
+- Counts down in real time
+- No pause once active
+- Should turn urgent in the last 10 seconds
+- Should become visually intense in the last 5 seconds
+
+### Win / Lose Conditions
+
+| Condition | Result |
+|---|---|
+| All fruits removed | Win |
+| Timer reaches 0 | Lose |
+| Dirt meter reaches 100 | Lose |
+
+## Scoring
+
+### Perfect Pop Count
+
+Every Red-state pop increments `perfectPops`.
+
+### End Screen Grades
+
+| Perfect Pops | Grade | Label |
+|---|---|---|
+| All fruits at Red | S | MASTER CHEF |
+| 70% or more | A | SKILLED PICKER |
+| 50% or more | B | DECENT HARVEST |
+| 30% or more | C | RUSHED JOB |
+| Below 30% | D | PANIC FARMER |
+
+The grade is display-only. It exists to give players a replay goal.
+
+### Combo Display
+
+Consecutive perfect pops can show a visual chain counter such as `x2`, `x3`, and so on. The combo is cosmetic in the GDD, not a gameplay multiplier.
+
+## Juice and Feel
+
+The game should feel fast and tactile. Target feedback timing is under 50 ms from tap to response.
+
+### Core Feedback
+
+- Pop particle burst, about 8 to 12 particles
+- Screen shake for red and overripe pops
+- Splatter decals that persist briefly
+- Floating score text
+- Fruit grow pulse while red
+
+### Polish
+
+- Idle wobble with fruit-specific offsets
+- Dirt meter slosh animation
+- Countdown pop-in
+- Timer pulse at low time
+- Win confetti
+- Overripe drip particles
+- Grade stamp animation
+
+## UI Layout
+
+| Element | Position | Notes |
+|---|---|---|
+| Dirt meter | Top left | Sludge fill style |
+| Timer | Top right | Pulses near the end |
+| Fruit grid | Center | Main interactive play area |
+| Combo display | Bottom right | Fades after inactivity |
+| Splatter decals | Background layer | Below fruit sprites |
+| Score popup | At tap position | Floats upward and fades |
+
+## Fruit Grid Layout
+
+Default layout:
+
+- 5 columns by 3 rows
+- 15 fruits total
+- centered on screen
+- minimum 60 px padding from screen edges
+
+Mobile portrait can switch to a denser layout if needed, but the interaction should remain touch-friendly.
+
+## Technical Notes
+
+### Scene Structure
+
+- `BootScene`
+- `MenuScene`
+- `CountdownScene`
+- `GameScene`
+- `ResultScene`
+
+### Performance Rules
+
+- No allocation in `update()`
+- Use pooling for splatters, particles, and score popups
+- Drive ripeness with delta time
+- Avoid `setTimeout` / `setInterval` for gameplay timing
+- Use tinting for fruit state visuals instead of texture swapping
+
+### Hitbox Rule
+
+Use a hitbox larger than the visible fruit, about 1.3x the sprite size.
+
+### State Thresholds
+
+```js
+const STATE_THRESHOLDS = {
+  GREEN_TO_YELLOW: 2500,
+  YELLOW_TO_RED: 5000,
+  RED_TO_OVERRIPE: 7500
+}
+
+const DIRT_PER_OVERRIPE = 20
+const TIMER_START = 35
+const FRUIT_COUNT = 15
 ```
 
-### Commercial Breaks
+### Visual Colors
 
-`autoCommercialBreak: true` is set in the plugin config, so Poki will automatically trigger commercial breaks between gameplay sessions.
+```js
+const FRUIT_COLORS = {
+  GREEN: 0x4CAF50,
+  YELLOW: 0xFFC107,
+  RED: 0xE53935,
+  OVERRIPE: 0x4E342E
+}
 
-## Making Your Game
-
-Replace the placeholder gameplay in `GameScene.ts` with your actual game logic. The systems are already wired up:
-
-| System | What to replace |
-|--------|----------------|
-| `SpawnSystem` | Change spawn callbacks to create your actual game objects |
-| `ScoreSystem` | Call `scoreSystem.add(points)` when the player earns points |
-| `DifficultySystem` | Tune values in `balancing.ts` to control ramp speed |
-| `GameScene` | Add your player, enemies, physics groups, collision handlers |
-
-## Configuration
-
-All tunable values are in two files:
-
-- **`src/data/gameConfig.ts`** — title, dimensions, background color, debug flag
-- **`src/data/balancing.ts`** — spawn intervals, difficulty ramp time, points per event
-
-## Type Checking
-
-```bash
-npm run typecheck
+const SPLATTER_COLORS = {
+  GREEN: 0x66BB6A,
+  YELLOW: 0xFFD54F,
+  RED: 0xEF5350,
+  OVERRIPE: 0x6D4C41
+}
 ```
 
-## Adding Assets
+## Audio Design
 
-Place images, audio, and spritesheets in `/public/assets/`. Load them in `PreloadScene.ts`:
+Audio is recommended but not required for the core loop.
 
-```ts
-this.load.image('player', 'assets/player.png')
-this.load.audio('bgm', 'assets/bgm.mp3')
-```
+| Event | Sound |
+|---|---|
+| Green pop | Light puff |
+| Yellow pop | Medium squelch |
+| Red pop | Big splat |
+| Overripe pop | Low thud and splat |
+| Countdown | Three short beeps |
+| Win | Short fanfare |
+| Lose | Descending sting |
 
-## Mobile Notes
+## Asset List
 
-- Canvas is portrait-first (480×854, 9:16)
-- All buttons have minimum 44×44px hit areas
-- Touch events are handled by Phaser's input system
-- `user-scalable=no` prevents accidental zoom on double-tap
+Minimum viable assets:
 
-## License
+- fruit base sprite or shape
+- splatter sprites
+- particle dot
+- dirt bar background
+- dirt bar fill
 
-MIT — use this template for any project, commercial or personal.
+Graphics objects are acceptable for the first pass.
+
+## Out of Scope
+
+- Physics simulation
+- Multiple fruit types
+- Combo score bonuses that affect win/loss
+- Meta progression
+- Multi-level flow
+- Multiplayer
+- Leaderboards
+
+## Implementation Order
+
+1. Render the fruit grid.
+2. Add tap-to-pop interaction.
+3. Add timer and dirt loss conditions.
+4. Add ripeness states.
+5. Add perfect pop scoring.
+6. Add game state transitions.
+7. Add juice: particles, shake, splatter, score popups.
+8. Add countdown, grades, and polish.
+9. Add audio.

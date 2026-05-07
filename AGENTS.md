@@ -1,35 +1,34 @@
-# AGENTS.md — AI Agent Reference for phaser-poki-starter
+# AGENTS.md - AI Agent Reference for phaser-poki-poppy-game
 
-> This file is written for AI coding agents, not human developers.
-> It is dense, precise, and assumes full codebase access.
-> Human documentation is in README.md.
+> This file is for AI coding agents, not human documentation.
+> Use code as the source of truth. `FruitPop_GDD_v2.md` describes the target design, but current code wins on conflicts.
+> Human-facing overview lives in `README.md`.
 
 ---
 
 ## 1. Project Overview
 
-**What it is:** A production-ready Phaser 3 browser game template targeting the Poki platform. It implements the complete scene lifecycle, all Poki SDK hooks, responsive scaling, persisted settings, and placeholder gameplay so an agent can build a complete game by replacing only the designated files.
+**What this repo is:** a Phaser 3 + TypeScript + Vite Poki browser game called `Fruit Pop`. The current runtime is a portrait-first fruit ripeness game with a countdown entry, 25-level progression, a dynamic board that grows from `2x2` to `10x10`, dirt meter, timer pressure, perfect pops, win/lose result states, and persisted mute/high-score storage.
 
-**Target platform:** Poki (https://poki.com) — casual browser games, mobile-first, portrait orientation (480×854).
+**Target platform:** Poki web games, portrait layout, base canvas `480 x 854`.
 
-**Tech stack — exact installed versions:**
+**Resolved versions in this workspace**
 
-| Package | package.json spec | Installed |
+| Package | package.json spec | Resolved version |
 |---|---|---|
-| phaser | ^3.80.1 | 3.90.0 |
-| @poki/phaser-3 | ^0.0.5 | 0.0.5 |
-| typescript | ^5.4.5 | 5.9.3 |
-| vite | ^5.2.11 | 5.4.21 |
+| phaser | `^3.80.1` | `3.90.0` |
+| @poki/phaser-3 | `^0.0.5` | `0.0.5` |
+| typescript | `^5.4.5` | `5.9.3` |
+| vite | `^5.2.11` | `5.4.21` |
 
-All four are in `devDependencies`. This is intentional — Vite bundles everything into `dist/` at build time; the devDependencies distinction has no deployment effect.
+**Commands**
 
-**Entry point:** `index.html` → `src/main.ts`
+- `npm run dev` -> Vite dev server at `http://localhost:3000`
+- `npm run build` -> `tsc && vite build`
+- `npm run typecheck` -> `tsc --noEmit`
+- `npm run preview` -> `vite preview`
 
-**Build command:** `npm run build` (runs `tsc && vite build`, outputs to `dist/`)
-
-**Dev command:** `npm run dev` (Vite only, no type checking; runs at http://localhost:3000)
-
-**Typecheck command:** `npm run typecheck` (runs `tsc --noEmit`)
+**Entry point:** `index.html` -> `src/main.ts`
 
 ---
 
@@ -37,687 +36,486 @@ All four are in `devDependencies`. This is intentional — Vite bundles everythi
 
 ### 2.1 File Index
 
-```
-index.html                        HTML shell; sets mobile viewport meta; mounts #game-container
-vite.config.ts                    Vite config; base='./', port=3000, phaser in its own chunk
-tsconfig.json                     TS strict mode; moduleResolution=bundler; noEmit=true
-package.json                      Scripts + dependencies
+| File | Responsibility |
+|---|---|
+| `index.html` | HTML shell. Sets the viewport, disables page zoom, mounts `#game-container`, and sets the browser tab title to `Fruit Pop`. |
+| `vite.config.ts` | Vite config. Uses `base: './'`, `port: 3000`, `open: true`, `assetsDir: 'assets'`, and splits Phaser into its own chunk. |
+| `tsconfig.json` | Strict TypeScript config. `moduleResolution: bundler`, `noEmit: true`, `noUnusedLocals: true`, `noUnusedParameters: true`. |
+| `package.json` | Scripts and dependency specs. |
+| `src/main.ts` | Boots `Phaser.Game`, registers the Poki plugin, and declares scene order. |
+| `src/scenes/BootScene.ts` | Initializes `ScaleManager` and `AudioManager`, then routes to `PreloadScene`. |
+| `src/scenes/PreloadScene.ts` | Shows loading UI, generates placeholder textures (`fruit`, `splatter`, `particle`), and routes to `MenuScene`. Audio loads are still TODO comments. |
+| `src/scenes/MenuScene.ts` | Title screen. Shows best score, mute toggle, animated fruit backdrop, and starts `CountdownScene`. |
+| `src/scenes/CountdownScene.ts` | 3-2-1-GO intro before gameplay. Carries the current level and board progression into `GameScene`. |
+| `src/scenes/GameScene.ts` | Core gameplay. Builds the dynamic fruit grid, applies the current level tuning, handles ripeness, taps, dirt meter, timer, scoring, pooling, and the `ResultScene` handoff. |
+| `src/scenes/ResultScene.ts` | End screen for win/lose outcomes. Shows score, perfect pops, grade, level info, board size, and replay/menu actions. |
+| `src/core/AudioManager.ts` | Static audio singleton with persisted mute/volume and browser unlock handling. |
+| `src/core/Config.ts` | Runtime config wrapper around `GAME_CONFIG` and `BALANCING`, plus environment detection. |
+| `src/core/SaveManager.ts` | Prefix-scoped `localStorage` helper and key registry. |
+| `src/core/ScaleManager.ts` | Responsive Phaser scale config and orientation overlay. This is the only module that creates/removes DOM elements. |
+| `src/data/gameConfig.ts` | Game title, canvas size, background color, debug flag, version, physics mode, target FPS. |
+| `src/data/balancing.ts` | Fruit Pop tuning values, the 25-level progression table, dynamic board layout helpers, and legacy compatibility constants for dormant helpers. |
+| `src/systems/ScoreSystem.ts` | Current score and persisted high score. |
+| `src/systems/ComboSystem.ts` | Legacy helper. Not wired into the current Fruit Pop flow. |
+| `src/systems/DifficultySystem.ts` | Legacy helper. Not wired into the current Fruit Pop flow. |
+| `src/systems/SpawnSystem.ts` | Legacy helper. Not wired into the current Fruit Pop flow. |
+| `src/components/ProgressBar.ts` | Reusable Phaser progress bar component. |
+| `src/components/UIButton.ts` | Reusable Phaser button component. |
+| `src/utils/helpers.ts` | Pure helpers such as `formatTime` and `formatScore`. |
+| `src/types/fruitPop.ts` | Shared Fruit Pop result types. |
+| `src/types/poki.d.ts` | Ambient typings for `@poki/phaser-3`. |
 
-src/main.ts
-  exports: nothing (side-effect: boots Phaser.Game)
-  imports: Phaser, PokiPlugin, all 5 scenes, ScaleManager, GAME_CONFIG
-  responsibility: assembles GameConfig, registers PokiPlugin, starts game
+### 2.2 Current Scene Flow
 
-src/scenes/BootScene.ts
-  exports: class BootScene extends Phaser.Scene  (key: 'BootScene')
-  imports: ScaleManager, AudioManager, config, BALANCING
-  responsibility: init() calls ScaleManager.init() + AudioManager.init(); create() fades in and routes to 'PreloadScene' after BALANCING.bootDelay ms
+`BootScene -> PreloadScene -> MenuScene -> CountdownScene -> GameScene -> ResultScene`
 
-src/scenes/PreloadScene.ts
-  exports: class PreloadScene extends Phaser.Scene  (key: 'PreloadScene')
-  imports: ProgressBar, config, GAME_CONFIG, BALANCING
-  responsibility: shows loading bar; generates placeholder textures (player/enemy/coin/particle); routes to 'MenuScene' on complete
+- `main.ts` registers Poki with `loadingSceneKey: 'PreloadScene'`, `gameplaySceneKey: 'GameScene'`, and `autoCommercialBreak: true`.
+- `PreloadScene` completion is the loading boundary that Poki watches.
+- `GameScene` is the gameplay boundary that Poki watches.
+- `CountdownScene` is a local transition scene only; Poki does not watch it.
+- `ResultScene` returns to `CountdownScene` with the next level after a win, or back to level 1 after a loss. `MenuScene` always resets to level 1.
 
-src/scenes/MenuScene.ts
-  exports: class MenuScene extends Phaser.Scene  (key: 'MenuScene')
-  imports: UIButton, AudioManager, SaveManager, SAVE_KEYS, config, GAME_CONFIG, BALANCING
-  responsibility: title screen; Play → 'GameScene'; mute toggle; shows saved high score
+### 2.3 Runtime Dependencies
 
-src/scenes/GameScene.ts
-  exports: class GameScene extends Phaser.Scene  (key: 'GameScene')
-  imports: ScoreSystem, DifficultySystem, SpawnSystem, AudioManager, config, GAME_CONFIG, BALANCING, formatScore
-  responsibility: main gameplay loop; player/enemies/coins; HUD; pause; game-over → 'ResultScene'
-
-src/scenes/ResultScene.ts
-  exports: class ResultScene extends Phaser.Scene  (key: 'ResultScene')
-  imports: UIButton, config, GAME_CONFIG, BALANCING, formatScore
-  responsibility: score display with count-up animation; Play Again → 'GameScene'; Menu → 'MenuScene'; rewarded ad hook placeholder
-
-src/core/AudioManager.ts
-  exports: class AudioManager (static-only singleton)
-  imports: SaveManager, SAVE_KEYS
-  public API: init(scene), playSfx(scene, key, vol?), playMusic(scene, key, vol?), stopMusic(), toggleMute():bool, setMuted(bool), setSfxVolume(0-1), setMusicVolume(0-1), get muted, get sfxVolume, get musicVolume
-  side effects: reads/writes localStorage via SaveManager; attaches touchstart/mousedown/keydown to document for audio unlock
-
-src/core/Config.ts
-  exports: interface RuntimeConfig, const config: RuntimeConfig
-  imports: GAME_CONFIG, BALANCING
-  responsibility: merges GAME_CONFIG + BALANCING + runtime detection (isDev, isMobile) into one injectable object
-
-src/core/SaveManager.ts
-  exports: class SaveManager (static-only), const SAVE_KEYS
-  imports: none
-  public API: save<T>(key, value), load<T>(key, default):T, remove(key), clearAll(), isAvailable():bool
-  side effects: reads/writes localStorage; all keys prefixed with 'pg_' (e.g. 'pg_high_score')
-  SAVE_KEYS: { highScore: 'high_score', muted: 'muted', sfxVolume: 'sfx_volume', musicVolume: 'music_volume' }
-
-src/core/ScaleManager.ts
-  exports: class ScaleManager (static-only)
-  imports: GAME_CONFIG
-  public API: init(), getPhaserScaleConfig():Phaser.Types.Core.ScaleConfig, isWrongOrientation():bool, get viewportWidth, get viewportHeight
-  side effects: attaches 'orientationchange'+'resize' to window; creates/removes a DOM overlay div (#orientation-warning) when in wrong orientation
-
-src/data/gameConfig.ts
-  exports: const GAME_CONFIG, type GameConfig
-  values: title='My Game', width=480, height=854, backgroundColor='#1a1a2e', debug=false, version='1.0.0', physics='arcade', targetFps=60
-
-src/data/balancing.ts
-  exports: const BALANCING, type Balancing
-  values: initialSpawnInterval=2000, minSpawnInterval=500, difficultyRampTime=60000, maxDifficultyMultiplier=3.0, pointsPerEvent=10, comboMultiplier=1.5, comboThreshold=5, startingLives=3, playerSpeed=300, sceneFadeDuration=300, bootDelay=100
-
-src/systems/ScoreSystem.ts
-  exports: class ScoreSystem
-  imports: SaveManager, SAVE_KEYS
-  constructor: loads persisted high score from localStorage
-  public API: add(points), reset(), getScore():number, getHighScore():number, isNewHighScore():bool, clearHighScore()
-  side effects: SaveManager.save on new high score
-
-src/systems/DifficultySystem.ts
-  exports: class DifficultySystem
-  imports: BALANCING
-  constructor: reads rampTime + maxMultiplier from BALANCING
-  public API: update(deltaMs), getDifficultyMultiplier():number [1.0..maxMultiplier], getCurrentSpawnInterval():number [ms, clamped to minSpawnInterval], getElapsedMs(), getElapsedSeconds(), getDifficultyProgress() [0..1], reset()
-  side effects: none (pure time accumulator)
-
-src/systems/SpawnSystem.ts
-  exports: interface SpawnEntry, class SpawnSystem
-  constructor: no args
-  public API: schedule(callback, intervalMs, fireImmediately?):SpawnEntry, tick(deltaMs), clear(), remove(entry), pause(), resume(), get isPaused, get count
-  note: intervalMs on returned SpawnEntry is mutable; GameScene updates it each frame to match difficulty
-  side effects: none (fires caller-provided callbacks)
-
-src/components/ProgressBar.ts
-  exports: interface ProgressBarConfig, class ProgressBar extends Phaser.GameObjects.Container
-  constructor: ProgressBarConfig { scene, x, y, width?, height?, trackColor?, fillColor?, highlightColor?, radius?, initialValue? }
-  public API: setValue(0..1), get value
-  side effects: calls scene.add.existing(this) in constructor
-
-src/components/UIButton.ts
-  exports: interface UIButtonConfig, class UIButton extends Phaser.GameObjects.Container
-  constructor: UIButtonConfig { scene, x, y, width?, height?, label, fontSize?, color?, hoverColor?, pressColor?, disabledColor?, textColor?, radius?, onClick? }
-  public API: setText(text):this, setEnabled(bool):this, get isDisabled
-  side effects: calls scene.add.existing(this) in constructor; emits 'click' event on pointer-up
-
-src/utils/helpers.ts
-  exports: randomInt, randomFloat, clamp, lerp, mapRange, zeroPad, formatTime, formatScore, isTouchDevice, randomPick, shuffle, degToRad, distance
-  imports: none
-  note: all functions are pure; no Phaser dependency
-
-src/types/poki.d.ts
-  purpose: ambient module declaration for @poki/phaser-3 (package ships no typings)
-  declares: PokiSDK interface, PokiPluginData interface, class PokiPlugin extends Phaser.Plugins.BasePlugin
-  PokiPlugin methods: runWhenInitialized(cb), rewardedBreak():Promise<bool>, commercialBreak():Promise<void>
-
-public/assets/
-  placeholder directory for game assets (images, audio, spritesheets)
-  load from this path in PreloadScene: this.load.image('key', 'assets/filename.png')
-```
-
-### 2.2 Scene Flow
-
-```
-              ┌──────────────────────────────────────────┐
-              │             Phaser.Game boots             │
-              │  PokiPlugin registers + loads SDK script  │
-              └──────────────┬───────────────────────────┘
-                             │
-                        BootScene
-                    (init: services)
-                    (create: 100ms delay)
-                             │
-                        PreloadScene  ◄─── PokiPlugin: gameLoadingFinished fires here
-                    (textures generated)
-                    (progress bar shown)
-                             │
-                        MenuScene
-                    (Play button / mute)
-                             │
-              ┌──────────────▼───────────────────────────┐
-              │            GameScene                      │
-              │  PokiPlugin: gameplayStart fires on enter │
-              │  PokiPlugin: gameplayStop fires on exit   │
-              │  PokiPlugin: commercialBreak auto-fires   │
-              │            between sessions               │
-              └──────────────┬───────────────────────────┘
-                             │ (lives == 0)
-                        ResultScene
-                    (score display, count-up)
-                    (rewarded ad placeholder)
-                             │ ──────────────────► MenuScene (MENU button)
-                             │ ◄────────────────── GameScene (PLAY AGAIN button)
-```
-
-### 2.3 System Dependency Graph
-
-```
+```text
 main.ts
-  → ScaleManager (for scale config, before Phaser init)
-  → all 5 scene classes
+  -> ScaleManager.getPhaserScaleConfig()
+  -> BootScene, PreloadScene, MenuScene, CountdownScene, GameScene, ResultScene
+  -> PokiPlugin global registration
 
 BootScene
-  → ScaleManager.init()
-  → AudioManager.init()
-  → config (for logging)
-  → BALANCING (for bootDelay)
+  -> ScaleManager.init()
+  -> AudioManager.init()
+  -> config
+  -> BALANCING.bootDelay
 
 PreloadScene
-  → ProgressBar
-  → config, GAME_CONFIG, BALANCING
+  -> ProgressBar
+  -> config, GAME_CONFIG, BALANCING
+  -> generates texture keys used by GameScene and MenuScene
 
 MenuScene
-  → UIButton
-  → AudioManager (toggle mute)
-  → SaveManager + SAVE_KEYS (read high score)
-  → config, GAME_CONFIG, BALANCING
+  -> UIButton
+  -> AudioManager
+  -> SaveManager + SAVE_KEYS
+  -> config, GAME_CONFIG, BALANCING
+
+CountdownScene
+  -> config, GAME_CONFIG, BALANCING
+  -> getFruitPopLevel(), FRUIT_POP_MAX_LEVEL
+  -> uses the `fruit` texture generated in PreloadScene
 
 GameScene
-  → ScoreSystem → SaveManager
-  → DifficultySystem → BALANCING
-  → SpawnSystem (pure)
-  → AudioManager
-  → config, GAME_CONFIG, BALANCING
-  → helpers.formatScore
+  -> ScoreSystem -> SaveManager
+  -> AudioManager
+  -> getFruitPopLevel(), getFruitPopProgress(), getFruitPopBoardLayout(), FRUIT_POP_MAX_LEVEL
+  -> formatTime
+  -> config, GAME_CONFIG, BALANCING
+  -> FruitPop result data types
 
 ResultScene
-  → UIButton
-  → config, GAME_CONFIG, BALANCING
-  → helpers.formatScore
+  -> UIButton
+  -> getFruitPopLevel(), FRUIT_POP_MAX_LEVEL
+  -> formatScore
+  -> config, GAME_CONFIG, BALANCING
+  -> FruitPop result data types
 
-AudioManager → SaveManager → localStorage
-ScoreSystem  → SaveManager → localStorage
-ScaleManager → window (DOM only for orientation overlay)
-Config       → GAME_CONFIG, BALANCING (merged at import time)
+AudioManager -> SaveManager -> localStorage
+ScoreSystem -> SaveManager -> localStorage
+ScaleManager -> window + document (orientation overlay only)
+Config -> GAME_CONFIG, BALANCING
 ```
 
 ---
 
 ## 3. Critical Constraints
 
-**Violating any of these will break Poki monetisation, cause runtime crashes, or break the build.**
+### 3.1 Poki scene keys must match exactly
 
-### 3.1 Scene keys MUST match Poki plugin config exactly
+`main.ts` uses:
 
-`main.ts` plugin data specifies:
-```typescript
-loadingSceneKey: 'PreloadScene'   // triggers gameLoadingFinished
-gameplaySceneKey: 'GameScene'     // triggers gameplayStart + gameplayStop
+```ts
+loadingSceneKey: 'PreloadScene'
+gameplaySceneKey: 'GameScene'
 ```
 
-The constructors in `PreloadScene.ts` and `GameScene.ts` both use `super({ key: 'PreloadScene' })` and `super({ key: 'GameScene' })` respectively. If you rename either scene, you MUST update BOTH the scene constructor AND the Poki plugin data in `main.ts`.
+Keep the scene constructors aligned:
 
-If these diverge, the Poki SDK will never fire `gameLoadingFinished` (game appears stuck in loading to Poki infrastructure) and `gameplayStart`/`gameplayStop` will never fire (ad timing breaks, revenue impact).
+- `new BootScene({ key: 'BootScene' })`
+- `new PreloadScene({ key: 'PreloadScene' })`
+- `new MenuScene({ key: 'MenuScene' })`
+- `new CountdownScene({ key: 'CountdownScene' })`
+- `new GameScene({ key: 'GameScene' })`
+- `new ResultScene({ key: 'ResultScene' })`
 
-### 3.2 SaveManager key namespace prefix
+If `PreloadScene` or `GameScene` is renamed, update the constructor and Poki plugin data together.
 
-All localStorage keys written by SaveManager are prefixed with `'pg_'` (defined as `const PREFIX = 'pg_'` in `SaveManager.ts`). SAVE_KEYS stores only the suffix: `highScore: 'high_score'` → written as `'pg_high_score'`. Never call `localStorage` directly — always use `SaveManager.save/load` with a key from `SAVE_KEYS` or a new entry added to `SAVE_KEYS`. Bypassing this breaks the namespace isolation and clearAll() scoping.
+### 3.2 SaveManager prefix is fixed
 
-### 3.3 AudioManager must remain a singleton
+All saved values use the `pg_` prefix. Never write to `localStorage` directly from scenes or systems. Use `SaveManager.save`, `SaveManager.load`, `SaveManager.remove`, or `SaveManager.clearAll` and keys from `SAVE_KEYS`.
 
-`AudioManager` is a static class. It has no constructor and no instances. `_currentMusic`, `_muted`, `_sfxVolume`, `_musicVolume`, `_audioUnlocked` are all static fields. Do NOT instantiate it (`new AudioManager()`), do NOT convert it to an instance class. Multiple instances would result in conflicting mute state and multiple audio unlock listeners. It is initialised once via `AudioManager.init(scene)` in `BootScene.init()`.
+### 3.3 AudioManager is a singleton
 
-### 3.4 ScaleManager.getPhaserScaleConfig() must be called inside the GameConfig object
+Do not instantiate `AudioManager`. It is static-only and owns:
 
-`main.ts` calls `ScaleManager.getPhaserScaleConfig()` as the value of the `scale` field in `Phaser.Types.Core.GameConfig`. This must happen before `new Phaser.Game(config)` is called (it is). Do NOT call it after game init or inside a scene — the scale config is consumed once at game construction. `ScaleManager.init()` (orientation handling) is called separately from `BootScene.init()` and is safe to move, but `getPhaserScaleConfig()` must always be in the root `GameConfig.scale` field.
+- persisted mute state
+- SFX and music volume state
+- current looping music track
+- browser audio unlock listeners
 
-### 3.5 No DOM manipulation in game logic
+`AudioManager.init(this)` is called once from `BootScene.init()`.
 
-`ScaleManager` is the only class permitted to touch the DOM (creates `#orientation-warning` overlay). All game content (sprites, text, shapes, UI) must be created via Phaser's scene APIs (`this.add.*`, `this.physics.add.*`, etc.). Do NOT call `document.createElement`, `document.getElementById`, or set `innerHTML` from scenes, systems, or components.
+### 3.4 ScaleManager.getPhaserScaleConfig() stays in main.ts
 
-### 3.6 No object allocation in `update()` loops
+The scale config is consumed when `new Phaser.Game(config)` runs. Keep `ScaleManager.getPhaserScaleConfig()` in the root game config. Do not move it into a scene.
 
-`GameScene.update()` must not create new objects each frame. Specifically:
-- Enemy and coin pooling uses `this.enemies.get(...)` / `this.coins.get(...)` — this returns pooled objects, not new ones.
-- `Phaser.Math.Between` is called in spawn methods (not in update directly).
-- `getChildren()` on Arcade Groups returns the internal array reference, not a copy — iterating it is allocation-free.
-- Do NOT use `new`, `Array.map`, `Object.assign`, `JSON.parse`, or spread operators inside `GameScene.update()`.
+### 3.5 DOM access is tightly scoped
 
-### 3.7 Scene startup order in main.ts
+`ScaleManager` is the only module that should create or remove DOM elements. `AudioManager` may attach and remove document-level event listeners for audio unlock, but it should not create UI or mutate page layout.
 
-Scenes in `main.ts` are declared as:
-```typescript
-scene: [BootScene, PreloadScene, MenuScene, GameScene, ResultScene]
+### 3.6 GameScene is the live gameplay contract
+
+Current gameplay depends on these generated texture keys:
+
+- `fruit`
+- `splatter`
+- `particle`
+
+Keep those keys if you change `PreloadScene` generation. If you replace them with real assets, update `GameScene` at the same time.
+
+`GameScene` starts `ResultScene` with `FruitPopResultData`:
+
+```ts
+{
+  level: number,
+  nextLevel: number,
+  outcome: 'win' | 'lose',
+  reason: string,
+  score: number,
+  perfectPops: number,
+  totalFruits: number,
+  highScore: number,
+  isNewHighScore: boolean,
+  grade: 'S' | 'A' | 'B' | 'C' | 'D'
+}
 ```
-The first scene in the array auto-starts. This MUST be `BootScene`. All other scenes are registered but idle until `scene.start('SceneName')` is called. Do not reorder.
 
-### 3.8 Phaser global namespace availability
+The current score is only awarded for perfect red pops, and the combo text is cosmetic. Keep the 25-level board progression separate from the moment-to-moment FruitState logic.
 
-Phaser's TypeScript declarations (`node_modules/phaser/types/phaser.d.ts`) are ambient globals (`declare namespace Phaser`). They become available to all files in the compilation once `main.ts` imports `phaser`. Scene files do NOT need `import Phaser from 'phaser'` — the global namespace is always in scope. Only `main.ts` needs the direct import.
+### 3.7 Scene order in main.ts is fragile
+
+Keep the scene array in this order:
+
+```ts
+scene: [BootScene, PreloadScene, MenuScene, CountdownScene, GameScene, ResultScene]
+```
+
+`BootScene` must stay first.
+
+### 3.8 Phaser globals are available
+
+`Phaser` is available as an ambient global in scene files because `main.ts` imports the package. Scene files do not need to import `Phaser` directly.
+
+### 3.9 Legacy systems are dormant
+
+`ComboSystem`, `DifficultySystem`, and `SpawnSystem` still exist in `src/systems/`, but the current Fruit Pop scenes do not use them. Do not wire new Fruit Pop gameplay through them unless you are intentionally reviving the old starter-mode architecture.
+
+### 3.10 There is no `public/assets/` folder in the repo
+
+`PreloadScene` currently uses generated placeholder textures. Do not document `public/assets/` as an existing asset location unless you add it.
 
 ---
 
 ## 4. Modification Guide
 
-### 4.1 Files to REPLACE (gameplay logic)
-
-| File | What to replace |
-|---|---|
-| `src/scenes/GameScene.ts` | Everything inside `createWorld()`, `createPlayer()`, `createGroups()`, `spawnEnemy()`, `spawnCoin()`, `handlePlayerHitEnemy()`, `handlePlayerCollectCoin()`, `updatePlayerMovement()`, `cleanupOffscreenObjects()`. Keep the HUD, pause, spawn system wiring, and game-over trigger structure. |
-| `src/scenes/PreloadScene.ts` → `loadAssets()` | Replace the `make.graphics` placeholder texture generation with `this.load.image(...)`, `this.load.spritesheet(...)`, `this.load.audio(...)` calls. Leave the progress bar and transition logic intact. |
-
-### 4.2 Files to TUNE (numbers only)
+### 4.1 Files to replace
 
 | File | What to change |
 |---|---|
-| `src/data/balancing.ts` | All gameplay numbers: spawn intervals, difficulty ramp, lives, speed, points. This is the first file to edit when tuning game feel. |
-| `src/data/gameConfig.ts` | Title, canvas dimensions, background color, debug flag, version string. Change `title` to rebrand. Change `width`/`height` together maintaining 9:16 ratio. |
+| `src/scenes/GameScene.ts` | Replace the gameplay implementation if you are changing fruit ripeness, dirt rules, timer rules, board layout, pooling, or the `ResultScene` handoff. |
+| `src/scenes/PreloadScene.ts` | Replace `loadAssets()` if you are adding real art/audio files. Keep the loading UI and transition logic intact. |
+| `src/scenes/MenuScene.ts` | Replace if you are changing the title screen layout, entry flow, or best-score presentation. |
+| `src/scenes/CountdownScene.ts` | Replace if the countdown flow or transition timing changes. |
+| `src/scenes/ResultScene.ts` | Replace if you change the end-state layout, result copy, grade display, or replay/menu flow. |
 
-### 4.3 Files to EXTEND (add to, don't replace)
+### 4.2 Files to tune
+
+| File | What to change |
+|---|---|
+| `src/data/balancing.ts` | Fruit size, grid size, board ramp values, level curve values, ripeness windows, timer length, dirt penalty, fail threshold, countdown timing, and effect timings. |
+| `src/data/gameConfig.ts` | Title, canvas size, background color, debug flag, version, physics mode, target FPS. |
+
+### 4.3 Files to extend
 
 | File | What to add |
 |---|---|
-| `src/scenes/PreloadScene.ts` → `loadAssets()` | New asset load calls |
-| `src/core/SaveManager.ts` → `SAVE_KEYS` | New save key entries |
-| `src/utils/helpers.ts` | New pure utility functions |
-| `src/types/poki.d.ts` | If Poki SDK exposes new methods not yet declared |
+| `src/core/SaveManager.ts` | Add new entries to `SAVE_KEYS` before using them in storage. |
+| `src/utils/helpers.ts` | Add pure utilities only. |
+| `src/types/fruitPop.ts` | Add new result fields, level data, or shared Fruit Pop types if the result payload grows. |
+| `src/types/poki.d.ts` | Add new Poki API declarations if the plugin surface grows. |
 
-### 4.4 Files that should NOT be modified unless necessary
+### 4.4 Files to avoid modifying unless necessary
 
-| File | Reason |
+| File | Why it is fragile |
 |---|---|
-| `src/core/AudioManager.ts` | Singleton with carefully balanced mute state, music volume, and browser audio unlock. Modifying risks breaking audio on mobile. |
-| `src/core/SaveManager.ts` | Changing PREFIX or key structure breaks existing saves for players. |
-| `src/core/ScaleManager.ts` | Scaling config tightly coupled to Phaser init order and DOM orientation overlay logic. |
-| `src/components/UIButton.ts` | Tested interaction states (hover/press/disabled). Modifying risks breaking touch events. |
-| `src/components/ProgressBar.ts` | Stable. Add a new component instead of modifying. |
-| `main.ts` | Plugin registration and scene order are fragile. Only modify if adding a new global plugin or scene. |
-| `index.html` | Mobile viewport meta tags are required for Poki. Do not remove `user-scalable=no` or `touch-action: none`. |
+| `src/core/AudioManager.ts` | Singleton state, persisted mute/volume, and browser unlock logic. |
+| `src/core/SaveManager.ts` | Prefix rules and save compatibility. |
+| `src/core/ScaleManager.ts` | Scale config order and orientation overlay behavior. |
+| `src/components/UIButton.ts` | Stable pointer/touch interaction behavior. |
+| `src/components/ProgressBar.ts` | Stable reusable component. |
+| `src/main.ts` | Poki plugin data and scene order are fragile. |
+| `index.html` | Required viewport, `touch-action`, and title behavior. |
+| `src/systems/ComboSystem.ts` | Dormant legacy helper. |
+| `src/systems/DifficultySystem.ts` | Dormant legacy helper. |
+| `src/systems/SpawnSystem.ts` | Dormant legacy helper. |
 
 ---
 
 ## 5. System Contracts
 
-### ScoreSystem
+### 5.1 ScoreSystem
 
-```typescript
+```ts
 constructor()
-  // Loads persisted high score from localStorage on construction.
-  // Call once per game session (GameScene.create()).
-
 add(points: number): void
-  // Adds points to current score. Clamps to 0 minimum.
-  // Automatically updates and persists high score if exceeded.
-
 reset(): void
-  // Resets current score to 0. Does NOT affect high score.
-
 getScore(): number
-  // Returns current in-session score.
-
 getHighScore(): number
-  // Returns all-time high score (loaded from localStorage at construction).
-
 isNewHighScore(): boolean
-  // Returns true if current score > 0 AND current score >= all-time high score.
-  // Call this before passing data to ResultScene.
-
 clearHighScore(): void
-  // Deletes persisted high score. Use for "reset data" feature only.
 ```
 
-Side effects: `SaveManager.save(SAVE_KEYS.highScore, ...)` called whenever score exceeds stored high score.
+- Loads persisted high score on construction.
+- `add()` clamps score at 0 minimum.
+- Writes a new high score through `SaveManager` whenever the current score exceeds the stored best.
+- `isNewHighScore()` returns true when the current score is positive and at least the stored high score.
 
-### DifficultySystem
+### 5.2 FruitPopResultData
 
-```typescript
-constructor()
-  // Reads BALANCING.difficultyRampTime and BALANCING.maxDifficultyMultiplier.
-  // Starts at elapsed=0.
-
-update(deltaMs: number): void
-  // Must be called every frame from GameScene.update(). Pass Phaser's delta arg.
-
-getDifficultyMultiplier(): number
-  // Returns value in [1.0, maxDifficultyMultiplier].
-  // Curve: ease-out quadratic (fast early ramp, plateaus near max).
-
-getCurrentSpawnInterval(): number
-  // Returns BALANCING.initialSpawnInterval / multiplier, clamped to BALANCING.minSpawnInterval.
-  // Use this as the live interval for SpawnSystem entries.
-
-getDifficultyProgress(): number
-  // Returns [0, 1] — fraction of ramp time elapsed.
-
-reset(): void
-  // Resets elapsed to 0. Call on game restart.
+```ts
+interface FruitPopResultData {
+  outcome: 'win' | 'lose'
+  reason: string
+  score: number
+  perfectPops: number
+  totalFruits: number
+  highScore: number
+  isNewHighScore: boolean
+  grade: 'S' | 'A' | 'B' | 'C' | 'D'
+}
 ```
 
-Side effects: none.
+- `GameScene` passes this into `ResultScene`.
+- `ResultScene` reads the same shape in `init(data)`.
 
-### SpawnSystem
+### 5.3 AudioManager
 
-```typescript
-constructor()
-  // No args. Creates empty entries array.
-
-schedule(callback: () => void, intervalMs: number, fireImmediately?: boolean): SpawnEntry
-  // Registers a spawn callback. Returns a mutable SpawnEntry reference.
-  // SpawnEntry.intervalMs can be written each frame to dynamically adjust rate.
-  // SpawnEntry.paused can be set true to suspend this entry without removing it.
-
-tick(deltaMs: number): void
-  // Must be called every frame from GameScene.update(). Advances all timers.
-  // Handles multiple fires per frame if delta is large (no spawn skip on lag).
-
-clear(): void
-  // Removes all entries. Call in GameScene.shutdown() and triggerGameOver().
-
-remove(entry: SpawnEntry): void
-  // Removes a specific entry returned by schedule().
-
-pause() / resume(): void
-  // Pauses/resumes the entire system. Called by GameScene.togglePause().
-
-get isPaused: boolean
-get count: number
-```
-
-Side effects: fires caller-provided callbacks.
-
-### AudioManager (static singleton)
-
-```typescript
+```ts
 static init(scene: Phaser.Scene): void
-  // Call ONCE from BootScene.init().
-  // Loads persisted mute/volume state from SaveManager.
-  // Attaches document-level audio unlock listeners (touchstart, mousedown, keydown).
-  // scene parameter is unused (reserved for future use) — pass `this`.
-
 static playSfx(scene: Phaser.Scene, key: string, volume?: number): void
-  // Plays one-shot sound. No-ops if: muted, key not loaded, audio context locked.
-  // Always safe to call — never throws.
-
 static playMusic(scene: Phaser.Scene, key: string, volume?: number): void
-  // Stops any current music, starts a new looping track.
-  // No-ops if key not loaded.
-
 static stopMusic(): void
-  // Stops and destroys current music track.
-
 static toggleMute(): boolean
-  // Flips mute state, persists via SaveManager. Returns new muted state.
-
 static setMuted(muted: boolean): void
-  // Explicit mute set. Persists via SaveManager.
-
-static get muted: boolean
-static get sfxVolume: number    // 0.0–1.0
-static get musicVolume: number  // 0.0–1.0
+static setSfxVolume(volume: number): void
+static setMusicVolume(volume: number): void
+static get muted(): boolean
+static get sfxVolume(): number
+static get musicVolume(): number
 ```
 
-Side effects: document event listeners (added once, never removed after unlock); SaveManager writes on mute/volume change.
+- `init()` loads persisted mute and volume state.
+- It wires one-time browser audio unlock listeners for `touchstart`, `touchend`, `mousedown`, and `keydown`.
+- Unlock listeners are removed after the first successful unlock.
+- `playSfx()` and `playMusic()` no-op safely if the sound key is missing or audio is locked.
 
-### SaveManager (static singleton)
+### 5.4 SaveManager
 
-```typescript
+```ts
 static save<T>(key: string, value: T): void
-  // Serialises value as JSON, stores as localStorage key 'pg_' + key.
-  // Silent on QuotaExceededError or unavailable storage.
-
 static load<T>(key: string, defaultValue: T): T
-  // Parses JSON from localStorage. Returns defaultValue if missing or malformed.
-
 static remove(key: string): void
-  // Removes 'pg_' + key from localStorage.
-
 static clearAll(): void
-  // Removes all keys starting with 'pg_'.
-
 static isAvailable(): boolean
-  // Returns true if localStorage is writable (test write/delete).
 ```
 
-Side effects: reads/writes browser localStorage.
+- All keys are written as `pg_` + key.
+- Storage failures are swallowed.
 
-### ScaleManager (static singleton)
+### 5.5 ScaleManager
 
-```typescript
+```ts
 static init(): void
-  // Call from BootScene.init(). Wires orientationchange + resize events.
-  // Creates/removes #orientation-warning DOM element as needed.
-
 static getPhaserScaleConfig(): Phaser.Types.Core.ScaleConfig
-  // Returns { mode: FIT, autoCenter: CENTER_BOTH, width: 480, height: 854, parent: 'game-container', expandParent: true }
-  // Call ONLY from main.ts GameConfig.scale field.
-
 static isWrongOrientation(): boolean
-  // True when viewport is landscape AND viewport width < 900px.
+static get viewportWidth(): number
+static get viewportHeight(): number
 ```
 
-Side effects: DOM (creates/removes div#orientation-warning); window event listeners.
+- `init()` attaches `orientationchange` and `resize` listeners.
+- `isWrongOrientation()` returns true for landscape viewports narrower than 900px.
+- The overlay element id is `orientation-warning`.
 
-### UIButton
+### 5.6 UIButton
 
-```typescript
+```ts
 constructor(cfg: UIButtonConfig)
-  // cfg: { scene, x, y, width?, height?, label, fontSize?, color?, hoverColor?,
-  //         pressColor?, disabledColor?, textColor?, radius?, onClick? }
-  // Calls scene.add.existing(this) — auto-added to scene display list.
-  // Minimum effective size: 44×44px (WCAG touch target).
-
 setText(text: string): this
 setEnabled(enabled: boolean): this
-get isDisabled: boolean
+get isDisabled(): boolean
 ```
 
-Emits `'click'` event on pointer-up. Use `onClick` callback in config or `button.on('click', fn)`.
+- Auto-adds itself to the scene display list.
+- Emits `click` on pointer-up.
+- Enforces a minimum effective touch target of 44 x 44 px.
 
-### ProgressBar
+### 5.7 ProgressBar
 
-```typescript
+```ts
 constructor(cfg: ProgressBarConfig)
-  // cfg: { scene, x, y, width?, height?, trackColor?, fillColor?,
-  //         highlightColor?, radius?, initialValue? }
-  // Calls scene.add.existing(this).
-
-setValue(value: number): void  // 0..1
-get value: number
+setValue(value: number): void
+get value(): number
 ```
+
+- Auto-adds itself to the scene display list.
+
+### 5.8 Poki plugin typings
+
+`src/types/poki.d.ts` declares:
+
+- `PokiSDK`
+- `PokiPluginData`
+- `PokiPlugin` with `runWhenInitialized`, `rewardedBreak`, and `commercialBreak`
 
 ---
 
 ## 6. Common Tasks
 
-### Add a new enemy type
+### Add or change a fruit visual
 
-1. Add a texture key in `PreloadScene.loadAssets()` — either `this.load.image('enemy_hard', ...)` or another `make.graphics` call.
-2. Add spawn logic in `GameScene.spawnEnemy()` (or create `spawnEnemyHard()` and add a new SpawnSystem entry in `setupSpawning()`).
-3. If it needs different collision behaviour, add a new `Phaser.Physics.Arcade.Group` in `GameScene.createGroups()` and a new `physics.add.overlap` in `setupPhysics()`.
-4. Add cleanup in `GameScene.cleanupOffscreenObjects()`.
-5. Tune spawn timing in `src/data/balancing.ts`.
+1. Update the generated texture or asset load in `PreloadScene`.
+2. Keep the `fruit`, `splatter`, and `particle` keys stable unless `GameScene` changes too.
+3. Tune fruit tinting or state handling in `GameScene`.
 
-### Add background music
+### Tune the game feel
 
-1. Add `this.load.audio('bgm', 'assets/bgm.mp3')` to `PreloadScene.loadAssets()`.
-2. In `GameScene.create()` (after systems are initialised), call `AudioManager.playMusic(this, 'bgm')`.
-3. In `GameScene.shutdown()`, call `AudioManager.stopMusic()`.
-4. Tune volume via `AudioManager.setMusicVolume(0.6)` in `BootScene.init()` or leave at default.
-
-### Add a new scene
-
-1. Create `src/scenes/MyScene.ts` extending `Phaser.Scene` with `super({ key: 'MyScene' })`.
-2. Import it in `src/main.ts`.
-3. Add it to the `scene: [...]` array in `main.ts` (position determines registration order, NOT auto-start order — only index 0 auto-starts).
-4. Navigate to it from another scene: `this.scene.start('MyScene')`.
-5. If needed, add a transition: fade-out → fade-in pattern already used in all existing scenes.
-
-### Change game dimensions
-
-Edit `src/data/gameConfig.ts`:
-```typescript
-width: 480,   // change both together
-height: 854,  // maintain 9:16 ratio for Poki portrait
-```
-This propagates automatically to `ScaleManager.getPhaserScaleConfig()`, all `GAME_CONFIG.width/height` references in scenes, and the background rect fills. Do NOT hardcode pixel values in scenes — always use `GAME_CONFIG.width` / `GAME_CONFIG.height`.
-
-### Add a rewarded ad
-
-In `ResultScene.create()`, find the `// TODO: rewarded break hook` comment and add:
-```typescript
-this.time.delayedCall(500, () => {
-  const poki = this.plugins.get('poki') as import('../types/poki').PokiPlugin
-  poki.rewardedBreak().then((rewarded) => {
-    if (rewarded) {
-      // Grant reward: extra life passed back to GameScene data, doubled score, etc.
-    }
-  })
-})
-```
-The `PokiPlugin` type is declared in `src/types/poki.d.ts`. Import from `'@poki/phaser-3'` or cast from `this.plugins.get('poki')`.
+1. Edit `src/data/balancing.ts`.
+2. Adjust the level table first, then tweak ripeness windows, dirt penalty, timer length, popup timing, or countdown timing.
+3. Keep the scene code free of magic numbers where possible.
 
 ### Add a new saved value
 
-1. Add a new key to `SAVE_KEYS` in `src/core/SaveManager.ts`:
-   ```typescript
-   export const SAVE_KEYS = {
-     ...existing keys...
-     myValue: 'my_value'   // stored as 'pg_my_value'
-   } as const
-   ```
-2. Write: `SaveManager.save(SAVE_KEYS.myValue, value)`
-3. Read: `SaveManager.load<MyType>(SAVE_KEYS.myValue, defaultValue)`
+1. Add a key to `SAVE_KEYS` in `src/core/SaveManager.ts`.
+2. Save with `SaveManager.save(SAVE_KEYS.yourKey, value)`.
+3. Load with `SaveManager.load(SAVE_KEYS.yourKey, defaultValue)`.
 
-### Add a commercial break manually
+### Add a new scene
 
-In any scene (e.g. before transitioning from ResultScene to GameScene on restart):
-```typescript
-const poki = this.plugins.get('poki') as import('../types/poki').PokiPlugin
-await poki.commercialBreak()
-// then start next scene
-this.scene.start('GameScene')
-```
-`autoCommercialBreak: true` in `main.ts` already fires one automatically between sessions; only add manual breaks for additional placements.
+1. Create `src/scenes/MyScene.ts` with `super({ key: 'MyScene' })`.
+2. Import it in `src/main.ts`.
+3. Add it to the `scene` array in `main.ts`.
+4. Keep `BootScene` first.
 
-### Add a new UI button
+### Rebrand the game
 
-```typescript
-const btn = new UIButton({
-  scene: this,
-  x: CX,
-  y: 400,
-  width: 200,
-  height: 56,
-  label: 'SETTINGS',
-  fontSize: 20,
-  color: 0x2c3e50,
-  hoverColor: 0x3d5166,
-  pressColor: 0x1a252f,
-  onClick: () => this.scene.start('SettingsScene')
-})
-```
+1. Change `src/data/gameConfig.ts -> title`.
+2. Change `index.html -> <title>`.
+3. Update any in-scene title copy that uses `config.game.title`.
 
-Button is auto-added to the scene display list. No need to call `this.add.existing(btn)`.
+### Add real art or audio
+
+1. Replace the generated textures in `PreloadScene`.
+2. Add audio loads in the commented TODO block.
+3. Keep the current keys stable if the rest of the code still depends on them.
+
+### Touch the legacy systems
+
+Only edit `ComboSystem`, `DifficultySystem`, or `SpawnSystem` if you are intentionally resurrecting the old starter architecture. Do not use them as the normal path for Fruit Pop gameplay.
 
 ---
 
 ## 7. Known Placeholders
 
-Every placeholder is a `// TODO:` comment or a named stub that must be replaced before shipping.
+The current code still contains intentional TODOs and stubs:
 
-| Placeholder | Location | What to replace with |
+| Placeholder | Location | Meaning |
 |---|---|---|
-| Placeholder textures (player, enemy, coin, particle) | `PreloadScene.ts` → `loadAssets()` lines 124–150 | Real asset loads: `this.load.image(...)`, `this.load.spritesheet(...)`. Remove all `make.graphics` + `generateTexture` calls. |
-| Audio asset loads | `PreloadScene.ts` lines 152–156 (commented out) | Uncomment and update paths: `this.load.audio('bgm', 'assets/bgm.mp3')` etc. |
-| Game title | `gameConfig.ts` line 8: `title: 'My Game'` | Your game's actual title. |
-| Tagline | `MenuScene.ts` line 76: `'Tap to survive'` | Your game's actual tagline. |
-| Player movement | `GameScene.ts` → `updatePlayerMovement()` + `createPlayer()` | Your game's specific player control scheme. |
-| Enemy spawn behaviour | `GameScene.ts` → `spawnEnemy()` | Your actual enemy type(s) and movement. |
-| Coin spawn behaviour | `GameScene.ts` → `spawnCoin()` | Your collectible type(s) or remove entirely. |
-| Win/lose condition | `GameScene.ts` → `handlePlayerHitEnemy()` + lives system | Your game's specific failure condition. |
-| Analytics hooks | 5× `// TODO: analytics hook` comments in MenuScene, GameScene (×3), ResultScene | Integrate your analytics SDK (e.g. `poki.trackEvent(...)` or GA). |
-| Rewarded ad hook | `ResultScene.ts` lines 57–65 (commented out block) | Uncomment and add reward logic. See Section 6. |
-| WASD up/down keys | `GameScene.ts` lines 397–400: `wasdKeys.up` + `wasdKeys.down` registered but unused | Either wire up vertical movement or remove `up`/`down` entries from `wasdKeys` to keep code clean. |
-| Background art | `GameScene.createWorld()` + `MenuScene.createBackground()` + `ResultScene.createBackground()` | Replace gradient graphics with tilemaps, parallax layers, or sprite backgrounds. |
-| Version string | `gameConfig.ts` line 18: `version: '1.0.0'` | Increment per release. |
+| Analytics hooks | `MenuScene`, `GameScene`, `ResultScene` | TODO comments for menu view, game start, gameplay, and result events. |
+| Real audio loads | `PreloadScene.loadAssets()` | The audio asset lines are still commented out. No audio files are loaded yet. |
+| Generated textures | `PreloadScene.loadAssets()` | `fruit`, `splatter`, and `particle` are generated at runtime for now. |
+| Legacy compatibility values | `src/data/balancing.ts` | Extra tuning keys remain so dormant legacy helpers still compile. |
+
+Notes:
+
+- There is no `public/assets/` directory in the repo today.
+- `GameScene` and `ResultScene` are already wired to the Fruit Pop result payload.
 
 ---
 
 ## 8. Test Checklist
 
-Run these checks after any modification. If all pass, the project is safe to deploy.
+Run these checks after changes that touch gameplay, assets, scene flow, storage, or Poki integration.
 
-### Typecheck
-```bash
-npm run typecheck
-```
-Must exit with code 0 and zero output.
+### Basic checks
 
-### Dev Server
-```bash
-npm run dev
-```
-Must start without errors. Open http://localhost:3000.
+- `npm run typecheck`
+- `npm run build`
+- `npm run dev`
 
-### Scene Flow
-- [ ] Game loads without white screen or JS console errors
-- [ ] BootScene transitions to PreloadScene within ~100ms (bootDelay)
-- [ ] PreloadScene shows progress bar and advances to 100%
-- [ ] PreloadScene transitions to MenuScene with fade
-- [ ] MenuScene shows title, tagline, PLAY button, mute button
-- [ ] High score shows below mute button if > 0 (check after one game session)
-- [ ] Pressing PLAY fades to GameScene
+### Scene flow
+
+- BootScene transitions to PreloadScene quickly.
+- PreloadScene shows the progress bar and then enters MenuScene.
+- MenuScene shows title, play button, mute button, and best score when present.
+- Play starts CountdownScene.
+- CountdownScene shows `3`, `2`, `1`, `GO!` and then enters GameScene.
+- GameScene renders a 5 x 3 fruit grid.
+- ResultScene shows win or lose copy and returns to MenuScene or CountdownScene.
 
 ### GameScene
-- [ ] Player spawns at bottom-center of screen
-- [ ] Player moves with arrow keys (left/right)
-- [ ] Player moves with WASD (A/D keys)
-- [ ] Player follows pointer/touch drag
-- [ ] Enemies spawn from top and fall downward
-- [ ] Coins spawn from top and fall slower than enemies
-- [ ] Lives counter decrements on enemy collision
-- [ ] Player flashes red on hit
-- [ ] Score increments on coin collection
-- [ ] Escape key shows/hides pause overlay
-- [ ] Game over triggers when lives reach 0
-- [ ] Camera shake on game over
-- [ ] Transition to ResultScene with score data
+
+- Level 1 should feel slow, generous, and rewarding.
+- Board size should start at `2x2` and grow toward `10x10` by level 25.
+- Each cleared round should increase pressure in a visible way.
+- Green and yellow fruit remove cleanly with no dirt penalty.
+- Red fruit counts as a perfect pop and increments score and perfect pop count.
+- Overripe fruit adds 20 dirt and can end the round at 100 dirt.
+- Timer counts down and can end the round at zero.
+- Clearing all fruit ends the round as a win.
+- Splatter, popup text, and particle effects reuse pooled objects.
 
 ### ResultScene
-- [ ] Score displays correctly (matches in-game score)
-- [ ] Score animates counting up from 0
-- [ ] "NEW BEST!" banner pulses if new high score
-- [ ] Previous best shown if not new high score and highScore > 0
-- [ ] PLAY AGAIN returns to GameScene
-- [ ] MENU returns to MenuScene
-- [ ] R key / Enter key triggers PLAY AGAIN
 
-### Poki SDK hooks
-- [ ] No `gameLoadingFinished` console errors (requires `loadingSceneKey: 'PreloadScene'` to match)
-- [ ] No `gameplayStart`/`gameplayStop` errors (requires `gameplaySceneKey: 'GameScene'` to match)
-- [ ] Commercial break fires between game sessions (with `autoCommercialBreak: true`)
+- Final score displays correctly.
+- Grade is shown and matches the result payload.
+- `NEW BEST!` appears only on a new high score.
+- The primary result button advances to the next level after a win, or retries at level 1 after a loss.
+- `MENU` returns to `MenuScene`.
+- `Enter` and `R` restart the game.
 
-### Audio
-- [ ] Mute button in MenuScene persists across scene transitions (reload page)
-- [ ] SFX plays on coin collect (`sfx_score`) and enemy hit (`sfx_hurt`) — only after real audio assets are loaded
-- [ ] Mute toggle in GameScene HUD (top-left icon) works
+### Poki
 
-### Persistence
-- [ ] High score persists after page reload
-- [ ] Mute state persists after page reload
-- [ ] localStorage keys are all prefixed `pg_`
+- `loadingSceneKey` stays `PreloadScene`.
+- `gameplaySceneKey` stays `GameScene`.
+- `autoCommercialBreak` stays enabled in `main.ts`.
+- No scene key drift between `main.ts` and the scene constructors.
 
-### Responsive / Mobile
-- [ ] Canvas fills screen on narrow mobile viewport (portrait)
-- [ ] Orientation warning overlay appears when rotating to landscape on small screen
-- [ ] All buttons respond to touch (no hover-only states required)
-- [ ] No page zoom on double-tap (user-scalable=no in viewport meta)
+### Audio and storage
 
-### Build
-```bash
-npm run build
-```
-- [ ] Exits with code 0
-- [ ] `dist/` contains `index.html`, `assets/` folder, and two JS chunks (`index-*.js`, `phaser-*.js`)
-- [ ] No TypeScript errors reported during `tsc` phase
+- Mute state persists after reload.
+- High score persists after reload.
+- All stored keys are prefixed with `pg_`.
+- Audio unlock remains safe on first touch or click.
 
----
+### Responsive
 
-## 9. Audit Record
+- Canvas fits portrait screens.
+- Orientation warning appears in landscape on small viewports.
+- Buttons remain usable by touch.
+- The page does not zoom on double-tap.
 
-**Audit performed:** 2026-04-14  
-**Auditor:** Claude (AI agent)  
-**TypeScript result:** `tsc --noEmit` → zero errors, clean exit  
-**Scene key consistency:** VERIFIED — `'PreloadScene'` and `'GameScene'` match exactly in plugin config and scene constructors  
-**Import graph:** VERIFIED — all relative imports resolve to real files; no circular dependencies  
-**Runtime compatibility:** VERIFIED — `@poki/phaser-3@0.0.5` dist exports `PokiPlugin` with `runWhenInitialized`, `rewardedBreak`, `commercialBreak`; plugin `init()` signature accepts `{ loadingSceneKey, gameplaySceneKey, autoCommercialBreak }` as passed by `main.ts`  
-**Issues found and fixed:** None — no code changes were required  
-**Placeholder count:** 15 intentional placeholders documented in Section 7
+### Build output
+
+- Build exits with code 0.
+- `dist/` contains the built HTML and bundled assets.
+- Phaser is split into its own chunk by Vite.
