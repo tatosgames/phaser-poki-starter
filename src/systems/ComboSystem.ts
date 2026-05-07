@@ -1,75 +1,145 @@
-/**
- * ComboSystem.ts
- * Tracks a consecutive-pop streak and maps it to a score multiplier.
- *
- * The host scene is responsible for calling reset() after a configurable
- * idle window (comboResetMs) elapses with no pops.
- *
- * Multiplier steps (from balancing.ts):
- *   streak 0–4  → 1x
- *   streak 5–9  → 2x
- *   streak 10–14 → 3x
- *   streak 15+  → 5x
- */
+export type ComboBreakReason =
+  | 'wrong_tap'
+  | 'overripe_tap'
+  | 'timeout'
+  | 'round_end'
+  | 'manual'
+
+export interface ComboTierConfig {
+  threshold: number
+  label: string
+  color: number
+  fxIntensity: 1 | 2 | 3 | 4
+}
+
+export interface ComboTierState extends ComboTierConfig {
+  index: number
+}
+
+export interface ComboUpdate {
+  count: number
+  tier: ComboTierState
+  previousTier: ComboTierState
+  isTierUp: boolean
+  timeRemainingRatio: number
+}
+
+export interface ComboBreakEvent {
+  previousCount: number
+  previousTier: ComboTierState
+  reason: ComboBreakReason
+}
+
+export interface ComboTimeoutEvent extends ComboBreakEvent {
+  reason: 'timeout'
+}
+
+const DEFAULT_TIERS: readonly ComboTierConfig[] = [
+  { threshold: 2, label: 'Nice', color: 0x7ccf5b, fxIntensity: 1 },
+  { threshold: 3, label: 'Great', color: 0x8ad04f, fxIntensity: 1 },
+  { threshold: 5, label: 'Smooth', color: 0xffcf5a, fxIntensity: 2 },
+  { threshold: 7, label: 'Hot', color: 0xffa94d, fxIntensity: 2 },
+  { threshold: 10, label: 'Amazing', color: 0xff8b47, fxIntensity: 3 },
+  { threshold: 15, label: 'Fire', color: 0xf26b5d, fxIntensity: 3 },
+  { threshold: 20, label: 'Insane', color: 0xef6bd3, fxIntensity: 4 },
+  { threshold: 30, label: 'Legendary', color: 0xffc857, fxIntensity: 4 },
+  { threshold: 50, label: 'Godlike', color: 0xffe680, fxIntensity: 4 }
+] as const
+
+const BASE_TIER: ComboTierState = {
+  threshold: 0,
+  label: 'Combo',
+  color: 0x7a3e2c,
+  fxIntensity: 1,
+  index: -1
+}
 
 export class ComboSystem {
-  private _streak = 0
-  private _multiplier: number
-  private readonly _thresholds: readonly number[]
-  private readonly _multipliers: readonly number[]
+  private _count = 0
+  private readonly _windowMs: number
+  private _timeRemainingMs = 0
+  private readonly _tiers: readonly ComboTierConfig[]
 
-  constructor(thresholds: readonly number[], multipliers: readonly number[]) {
-    if (thresholds.length !== multipliers.length || thresholds.length === 0) {
-      throw new Error('ComboSystem: thresholds and multipliers must be non-empty and equal length')
+  constructor(windowMs: number, tiers: readonly ComboTierConfig[] = DEFAULT_TIERS) {
+    this._windowMs = Math.max(300, Math.floor(windowMs))
+    this._tiers = tiers.slice().sort((a, b) => a.threshold - b.threshold)
+  }
+
+  increment(): ComboUpdate {
+    const previousTier = this.tier
+    this._count += 1
+    this._timeRemainingMs = this._windowMs
+    const tier = this.tier
+
+    return {
+      count: this._count,
+      tier,
+      previousTier,
+      isTierUp: tier.index > previousTier.index,
+      timeRemainingRatio: this.timeRemainingRatio
     }
-    this._thresholds = thresholds
-    this._multipliers = multipliers
-    this._multiplier = multipliers[0]
   }
 
-  /**
-   * Call on every successful pop.
-   * Increments the streak and returns the *new* multiplier.
-   */
-  onPop(): number {
-    this._streak++
-    this._recalculate()
-    return this._multiplier
+  break(reason: ComboBreakReason): ComboBreakEvent | null {
+    if (this._count <= 1) {
+      this.reset()
+      return null
+    }
+
+    const event: ComboBreakEvent = {
+      previousCount: this._count,
+      previousTier: this.tier,
+      reason
+    }
+    this.reset()
+    return event
   }
 
-  /**
-   * Call after the idle window expires (no pop within comboResetMs).
-   * Resets streak to 0, multiplier back to 1x.
-   */
+  update(deltaMs: number): ComboTimeoutEvent | null {
+    if (this._count <= 1) {
+      return null
+    }
+
+    this._timeRemainingMs = Math.max(0, this._timeRemainingMs - deltaMs)
+    if (this._timeRemainingMs > 0) {
+      return null
+    }
+
+    const event = this.break('timeout')
+    if (!event) {
+      return null
+    }
+
+    return {
+      ...event,
+      reason: 'timeout'
+    }
+  }
+
   reset(): void {
-    this._streak = 0
-    this._recalculate()
+    this._count = 0
+    this._timeRemainingMs = 0
   }
 
-  get streak(): number {
-    return this._streak
+  get count(): number {
+    return this._count
   }
 
-  get multiplier(): number {
-    return this._multiplier
-  }
-
-  /** True when the multiplier just changed — checked by comparing before/after onPop */
-  multiplierAt(streak: number): number {
-    let result = this._multipliers[0]
-    for (let i = 0; i < this._thresholds.length; i++) {
-      if (streak >= this._thresholds[i]) result = this._multipliers[i]
+  get tier(): ComboTierState {
+    let tier: ComboTierState = BASE_TIER
+    for (let i = 0; i < this._tiers.length; i++) {
+      const candidate = this._tiers[i]
+      if (this._count >= candidate.threshold) {
+        tier = { ...candidate, index: i }
+      }
     }
-    return result
+    return tier
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-
-  private _recalculate(): void {
-    let result = this._multipliers[0]
-    for (let i = 0; i < this._thresholds.length; i++) {
-      if (this._streak >= this._thresholds[i]) result = this._multipliers[i]
+  get timeRemainingRatio(): number {
+    if (this._count <= 1) {
+      return 0
     }
-    this._multiplier = result
+    return Math.max(0, Math.min(1, this._timeRemainingMs / this._windowMs))
   }
 }

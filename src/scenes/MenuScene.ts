@@ -10,19 +10,19 @@
  */
 
 import { UIButton } from '../components/UIButton'
+import { RipenessGuide } from '../components/RipenessGuide'
 import { AudioManager } from '../core/AudioManager'
 import { SaveManager, SAVE_KEYS } from '../core/SaveManager'
 import { config } from '../core/Config'
+import { getViewportLayout, type ViewportLayout } from '../core/ViewportLayout'
 import { GAME_CONFIG } from '../data/gameConfig'
 import { BALANCING } from '../data/balancing'
-
-const CX = GAME_CONFIG.width / 2
-const CY = GAME_CONFIG.height / 2
 
 const BACKDROP_COLORS = [0xffc857, 0xff8c42, 0xf26b5d, 0x7ccf5b, 0x89c2ff]
 
 export class MenuScene extends Phaser.Scene {
   private muteButton!: UIButton
+  private ripenessGuide: RipenessGuide | null = null
   private enterKey!: Phaser.Input.Keyboard.Key
   private spaceKey!: Phaser.Input.Keyboard.Key
   private escapeKey!: Phaser.Input.Keyboard.Key
@@ -32,37 +32,39 @@ export class MenuScene extends Phaser.Scene {
   }
 
   create(): void {
+    const layout = getViewportLayout()
     this.cameras.main.setBackgroundColor(config.game.backgroundColor)
     this.cameras.main.fadeIn(BALANCING.sceneFadeDuration, 0, 0, 0)
 
-    this.createBackground()
-    this.createBackdropFruitGrid()
-    this.createTitle()
-    this.createButtons()
-    this.createFooter()
+    this.createBackground(layout)
+    this.createBackdropFruitGrid(layout)
+    const subtitleY = this.createTitle(layout)
+    this.createRipenessGuide(layout, subtitleY)
+    this.createButtons(layout, subtitleY)
+    this.createFooter(layout)
     this.setupKeyboard()
 
     // TODO: analytics hook - menu_viewed
   }
 
-  private createBackground(): void {
+  private createBackground(layout: ViewportLayout): void {
     const bg = this.add.graphics()
     bg.fillGradientStyle(0xf7ead4, 0xf7ead4, 0xe9f4dc, 0xe7f0ff, 1)
     bg.fillRect(0, 0, GAME_CONFIG.width, GAME_CONFIG.height)
 
     bg.fillStyle(0xffffff, 0.1)
-    bg.fillCircle(CX - 140, 160, 180)
+    bg.fillCircle(layout.cx - 140, 160, 180)
     bg.fillStyle(0xffb18f, 0.08)
-    bg.fillCircle(CX + 120, GAME_CONFIG.height - 160, 210)
+    bg.fillCircle(layout.cx + 120, GAME_CONFIG.height - 160, 210)
   }
 
-  private createBackdropFruitGrid(): void {
+  private createBackdropFruitGrid(layout: ViewportLayout): void {
     const cols = 4
     const rows = 3
-    const startX = 82
-    const startY = 170
-    const gapX = 98
-    const gapY = 120
+    const startX = layout.isLandscape ? 42 : 82
+    const startY = layout.isLandscape ? 120 : 170
+    const gapX = layout.isLandscape ? 90 : 98
+    const gapY = layout.isLandscape ? 102 : 120
 
     for (let row = 0; row < rows; row++) {
       for (let col = 0; col < cols; col++) {
@@ -86,9 +88,12 @@ export class MenuScene extends Phaser.Scene {
     }
   }
 
-  private createTitle(): void {
+  private createTitle(layout: ViewportLayout): number {
+    const titleY = layout.isLandscape ? 178 : layout.cy - 170
+    const subtitleY = layout.isLandscape ? 248 : layout.cy - 102
+
     this.add
-      .text(CX, CY - 170, config.game.title, {
+      .text(layout.cx, titleY, config.game.title, {
         fontSize: '54px',
         fontFamily: 'Arial, sans-serif',
         color: '#7a3e2c',
@@ -100,20 +105,38 @@ export class MenuScene extends Phaser.Scene {
       .setOrigin(0.5)
 
     this.add
-      .text(CX, CY - 102, 'Tap fruit at peak ripeness', {
+      .text(layout.cx, subtitleY, 'Tap fruit at peak ripeness', {
         fontSize: '20px',
         fontFamily: 'Arial, sans-serif',
         color: '#8c7352',
         resolution: 2
       })
       .setOrigin(0.5)
+
+    return subtitleY
   }
 
-  private createButtons(): void {
+  private createRipenessGuide(layout: ViewportLayout, subtitleY: number): void {
+    const guideY = subtitleY + (layout.isLandscape ? 52 : 58)
+    this.ripenessGuide = new RipenessGuide({
+      scene: this,
+      x: layout.cx,
+      y: guideY,
+      stages: ['green', 'yellow', 'orange', 'red', 'rotten'],
+      targetStage: 'red',
+      animationEnabled: true,
+      stageSpacing: layout.isLandscape ? 44 : 56
+    })
+  }
+
+  private createButtons(layout: ViewportLayout, subtitleY: number): void {
+    const playY = subtitleY + (layout.isLandscape ? 114 : 198)
+    const muteY = playY + (layout.isLandscape ? 78 : 84)
+
     new UIButton({
       scene: this,
-      x: CX,
-      y: CY + 20,
+      x: layout.cx,
+      y: playY,
       width: 240,
       height: 64,
       label: 'PLAY',
@@ -127,8 +150,8 @@ export class MenuScene extends Phaser.Scene {
     const muteLabel = AudioManager.muted ? 'Muted' : 'Sound On'
     this.muteButton = new UIButton({
       scene: this,
-      x: CX,
-      y: CY + 104,
+      x: layout.cx,
+      y: muteY,
       width: 180,
       height: 48,
       label: muteLabel,
@@ -140,11 +163,12 @@ export class MenuScene extends Phaser.Scene {
     })
   }
 
-  private createFooter(): void {
+  private createFooter(layout: ViewportLayout): void {
+    const footerY = layout.isLandscape ? 508 : layout.cy + 170
     const hs = SaveManager.load<number>(SAVE_KEYS.highScore, 0)
     if (hs > 0) {
       this.add
-        .text(CX, CY + 170, `Best Harvest: ${hs.toLocaleString()}`, {
+        .text(layout.cx, footerY, `Best Harvest: ${hs.toLocaleString()}`, {
           fontSize: '18px',
           fontFamily: 'Arial, sans-serif',
           color: '#7a3e2c',
@@ -153,7 +177,7 @@ export class MenuScene extends Phaser.Scene {
         .setOrigin(0.5)
     } else {
       this.add
-        .text(CX, CY + 170, 'One tap at a time.', {
+        .text(layout.cx, footerY, 'One tap at a time.', {
           fontSize: '18px',
           fontFamily: 'Arial, sans-serif',
           color: '#7a3e2c',
@@ -163,7 +187,7 @@ export class MenuScene extends Phaser.Scene {
     }
 
     this.add
-      .text(CX, GAME_CONFIG.height - 20, `v${config.game.version}`, {
+      .text(layout.cx, layout.footerBottom, `v${config.game.version}`, {
         fontSize: '12px',
         fontFamily: 'Arial, sans-serif',
         color: '#8c7352',
@@ -197,6 +221,10 @@ export class MenuScene extends Phaser.Scene {
   }
 
   shutdown(): void {
+    if (this.ripenessGuide) {
+      this.ripenessGuide.destroy()
+      this.ripenessGuide = null
+    }
     this.enterKey?.destroy()
     this.spaceKey?.destroy()
     this.escapeKey?.destroy()

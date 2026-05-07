@@ -2,8 +2,7 @@
  * PreloadScene.ts
  * Loads all game assets and shows a progress bar during loading.
  *
- * Poki: The PokiPlugin automatically calls gameLoadingFinished
- * when this scene's load completes (configured via loadingSceneKey in main.ts).
+ * Poki: gameLoadingFinished is called explicitly in create() via PokiBridge.
  *
  * Fruit Pop currently uses generated placeholder textures so the
  * game runs without external art files. Replace these generated
@@ -12,7 +11,7 @@
 
 import { ProgressBar } from '../components/ProgressBar'
 import { config } from '../core/Config'
-import { pokiGameLoadingFinished } from '../core/PokiLifecycle'
+import { pokiBridge } from '../lib/poki/PokiBridge'
 import { GAME_CONFIG } from '../data/gameConfig'
 import { BALANCING } from '../data/balancing'
 
@@ -37,7 +36,8 @@ export class PreloadScene extends Phaser.Scene {
   }
 
   create(): void {
-    pokiGameLoadingFinished(this)
+    pokiBridge.init(this)
+    pokiBridge.gameLoadingFinished('preload_complete')
     this.cameras.main.fadeOut(BALANCING.sceneFadeDuration, 0, 0, 0)
     this.cameras.main.once(
       Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE,

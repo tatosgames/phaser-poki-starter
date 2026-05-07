@@ -11,7 +11,11 @@
  */
 
 import { AudioManager } from '../core/AudioManager'
-import { pokiGameplayStart, pokiGameplayStop } from '../core/PokiLifecycle'
+import { pokiBridge } from '../lib/poki/PokiBridge'
+import { getViewportLayout } from '../core/ViewportLayout'
+import { ComboWidget } from '../components/ComboWidget'
+import { ComboFxController } from '../systems/ComboFxController'
+import { ComboSystem } from '../systems/ComboSystem'
 import { ScoreSystem } from '../systems/ScoreSystem'
 import { GAME_CONFIG } from '../data/gameConfig'
 import {
@@ -91,20 +95,34 @@ export class GameScene extends Phaser.Scene {
   private dirtValueText!: Phaser.GameObjects.Text
   private timerText!: Phaser.GameObjects.Text
   private perfectText!: Phaser.GameObjects.Text
-  private comboText!: Phaser.GameObjects.Text
+  private comboSystem!: ComboSystem
+  private comboWidget: ComboWidget | null = null
+  private comboFx: ComboFxController | null = null
 
   private timerRemainingMs: number = BALANCING.timerStartMs
   private dirtMeter = 0
   private perfectPops = 0
-  private comboChain = 0
   private fruitsRemaining = 0
   private lastShownSecond = -1
   private lastDirtValue = -1
   private lastPerfectValue = -1
   private gameEnded = false
-  private comboResetTimer: Phaser.Time.TimerEvent | null = null
   private resultQueued = false
-  private pokiGameplayActive = false
+  private hasPlayerInteracted = false
+  private firstInteractionHandler: (() => void) | null = null
+  private dirtLabelX = 16
+  private dirtLabelY = 10
+  private dirtValueX = 16
+  private dirtValueY = 28
+  private dirtBarX = 16
+  private dirtBarY = 92
+  private dirtBarWidth = 170
+  private timerTextX = GAME_CONFIG.width - 16
+  private timerTextY = 12
+  private perfectTextX = CX
+  private perfectTextY = 72
+  private comboWidgetX = CX
+  private comboWidgetY = 120
 
   constructor() {
     super({ key: 'GameScene' })
@@ -128,13 +146,15 @@ export class GameScene extends Phaser.Scene {
     this.timerRemainingMs = this.levelConfig.timerStartMs
     this.dirtMeter = 0
     this.perfectPops = 0
-    this.comboChain = 0
     this.fruitsRemaining = 0
     this.lastShownSecond = -1
     this.lastDirtValue = -1
     this.lastPerfectValue = -1
     this.gameEnded = false
     this.resultQueued = false
+    this.hasPlayerInteracted = false
+    this.firstInteractionHandler = null
+    this.comboSystem = new ComboSystem(this.levelConfig.comboResetMs)
 
     this.createBackground()
     this.createParticles()
@@ -142,27 +162,39 @@ export class GameScene extends Phaser.Scene {
     this.createHUD()
     this.createFruitBoard()
     this.updateHUD(true)
-    this.startPokiGameplay()
+    pokiBridge.init(this)
+    this.armFirstInputGate()
 
     // TODO: analytics hook - gameplay_started
   }
 
-  private startPokiGameplay(): void {
-    if (this.pokiGameplayActive) {
+  private armFirstInputGate(): void {
+    if (this.firstInteractionHandler) {
       return
     }
 
-    this.pokiGameplayActive = true
-    pokiGameplayStart(this)
+    this.firstInteractionHandler = () => {
+      if (this.hasPlayerInteracted || this.gameEnded) {
+        return
+      }
+
+      this.hasPlayerInteracted = true
+      pokiBridge.gameplayStart('first_player_input')
+      this.disarmFirstInputGate()
+    }
+
+    this.input.on(Phaser.Input.Events.POINTER_DOWN, this.firstInteractionHandler)
+    this.input.keyboard?.on('keydown', this.firstInteractionHandler)
   }
 
-  private stopPokiGameplay(): void {
-    if (!this.pokiGameplayActive) {
+  private disarmFirstInputGate(): void {
+    if (!this.firstInteractionHandler) {
       return
     }
 
-    this.pokiGameplayActive = false
-    pokiGameplayStop(this)
+    this.input.off(Phaser.Input.Events.POINTER_DOWN, this.firstInteractionHandler)
+    this.input.keyboard?.off('keydown', this.firstInteractionHandler)
+    this.firstInteractionHandler = null
   }
 
   private createBackground(): void {
@@ -189,32 +221,53 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createHUD(): void {
+    const layout = getViewportLayout()
     const progress = getFruitPopProgress(this.level)
-    const progressBarWidth = 220
+    const progressBarWidth = layout.isLandscape ? 122 : 220
     const progressBarHeight = 10
-    const progressBarX = CX - progressBarWidth / 2
-    const progressBarY = 34
+    const progressBarX = layout.isLandscape && layout.sideRailX !== null
+      ? layout.sideRailX + 8
+      : layout.cx - progressBarWidth / 2
+    const progressBarY = layout.isLandscape ? 170 : 34
     const progressFillWidth = Math.max(0, Math.round(progressBarWidth * progress))
+    const levelTextX = layout.isLandscape && layout.sideRailX !== null ? layout.sideRailX + 8 : layout.cx
+    const levelTextOrigin = layout.isLandscape ? 0 : 0.5
+    const boardTextX = levelTextX
+    const boardTextOrigin = levelTextOrigin
+
+    this.dirtLabelX = layout.isLandscape && layout.sideRailX !== null ? layout.sideRailX + 8 : 16
+    this.dirtLabelY = layout.isLandscape ? 220 : 10
+    this.dirtValueX = this.dirtLabelX
+    this.dirtValueY = this.dirtLabelY + 18
+    this.dirtBarX = this.dirtLabelX
+    this.dirtBarY = this.dirtValueY + 20
+    this.dirtBarWidth = layout.isLandscape ? 122 : 170
+    this.timerTextX = layout.isLandscape && layout.sideRailX !== null ? layout.sideRailX + layout.sideRailWidth - 8 : GAME_CONFIG.width - 16
+    this.timerTextY = layout.isLandscape ? 24 : 12
+    this.perfectTextX = layout.isLandscape ? layout.boardCenterX : layout.cx
+    this.perfectTextY = layout.isLandscape ? 42 : 72
+    this.comboWidgetX = layout.isLandscape ? layout.boardCenterX : layout.cx
+    this.comboWidgetY = layout.isLandscape ? 92 : 126
 
     this.add
-      .text(CX, 10, `LEVEL ${this.level} / ${FRUIT_POP_MAX_LEVEL}`, {
+      .text(levelTextX, layout.headerTop, `LEVEL ${this.level} / ${FRUIT_POP_MAX_LEVEL}`, {
         fontSize: '18px',
         fontFamily: 'Arial, sans-serif',
         color: '#7a3e2c',
         fontStyle: 'bold',
         resolution: 2
       })
-      .setOrigin(0.5, 0)
+      .setOrigin(levelTextOrigin, 0)
       .setDepth(20)
 
     this.add
-      .text(CX, 30, `BOARD ${this.levelConfig.boardLabel}`, {
+      .text(boardTextX, layout.headerTop + 20, `BOARD ${this.levelConfig.boardLabel}`, {
         fontSize: '16px',
         fontFamily: 'Arial, sans-serif',
         color: '#8c7352',
         resolution: 2
       })
-      .setOrigin(0.5, 0)
+      .setOrigin(boardTextOrigin, 0)
       .setDepth(20)
 
     const progressTrack = this.add.graphics().setDepth(19)
@@ -240,7 +293,7 @@ export class GameScene extends Phaser.Scene {
       .setDepth(20)
 
     this.add
-      .text(16, 10, 'DIRT', {
+      .text(this.dirtLabelX, this.dirtLabelY, 'DIRT', {
         fontSize: '14px',
         fontFamily: 'Arial, sans-serif',
         color: '#7a3e2c',
@@ -250,7 +303,7 @@ export class GameScene extends Phaser.Scene {
       .setDepth(20)
 
     this.dirtValueText = this.add
-      .text(16, 28, '0 / 100', {
+      .text(this.dirtValueX, this.dirtValueY, '0 / 100', {
         fontSize: '16px',
         fontFamily: 'Arial, sans-serif',
         color: '#7a3e2c',
@@ -262,18 +315,18 @@ export class GameScene extends Phaser.Scene {
     this.dirtFill = this.add.graphics().setDepth(20)
 
     this.timerText = this.add
-      .text(GAME_CONFIG.width - 16, 12, formatTime(this.levelConfig.timerStartMs), {
+      .text(this.timerTextX, this.timerTextY, formatTime(this.levelConfig.timerStartMs), {
         fontSize: '24px',
         fontFamily: 'Arial, sans-serif',
         color: '#7a3e2c',
         fontStyle: 'bold',
         resolution: 2
       })
-      .setOrigin(1, 0)
+      .setOrigin(layout.isLandscape ? 1 : 1, 0)
       .setDepth(20)
 
     this.perfectText = this.add
-      .text(CX, 72, 'Perfect: 0', {
+      .text(this.perfectTextX, this.perfectTextY, 'Perfect: 0', {
         fontSize: '18px',
         fontFamily: 'Arial, sans-serif',
         color: '#7a3e2c',
@@ -283,17 +336,15 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5, 0)
       .setDepth(20)
 
-    this.comboText = this.add
-      .text(GAME_CONFIG.width - 16, GAME_CONFIG.height - 72, '', {
-        fontSize: '18px',
-        fontFamily: 'Arial, sans-serif',
-        color: '#7a3e2c',
-        fontStyle: 'bold',
-        resolution: 2
-      })
-      .setOrigin(1, 0)
-      .setDepth(20)
-      .setVisible(false)
+    this.comboWidget = new ComboWidget({
+      scene: this,
+      x: this.comboWidgetX,
+      y: this.comboWidgetY,
+      width: layout.isLandscape ? 184 : 220,
+      showMeter: true,
+      animationEnabled: true
+    })
+    this.comboFx = new ComboFxController(this)
   }
 
   private createPools(): void {
@@ -324,31 +375,37 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createFruitBoard(): void {
+    const viewport = getViewportLayout()
     const boardCols = this.levelConfig.boardCols
     const boardRows = this.levelConfig.boardRows
     const layout = getFruitPopBoardLayout(boardCols, boardRows)
-    const topInset = 118
-    const bottomInset = 126
-    const availableHeight = GAME_CONFIG.height - topInset - bottomInset
-    const startX = CX - layout.boardSpanX / 2 + layout.fruitSize / 2
-    const startY = topInset + (availableHeight - layout.boardSpanY) / 2 + layout.fruitSize / 2
+    const availableWidth = viewport.boardRight - viewport.boardLeft
+    const availableHeight = viewport.boardBottom - viewport.boardTop
+    const scaleToFit = Math.min(1, availableWidth / layout.boardSpanX, availableHeight / layout.boardSpanY)
+    const fruitSize = Math.max(28, Math.round(layout.fruitSize * scaleToFit))
+    const gridGap = Math.max(4, Math.round(layout.gridGap * scaleToFit))
+    const hitSize = Math.max(34, Math.round(layout.hitSize * scaleToFit))
+    const spanX = boardCols * fruitSize + (boardCols - 1) * gridGap
+    const spanY = boardRows * fruitSize + (boardRows - 1) * gridGap
+    const startX = viewport.boardCenterX - spanX / 2 + fruitSize / 2
+    const startY = viewport.boardTop + (availableHeight - spanY) / 2 + fruitSize / 2
 
     this.fruitsRemaining = boardCols * boardRows
 
     for (let row = 0; row < boardRows; row++) {
       for (let col = 0; col < boardCols; col++) {
-        const x = startX + col * (layout.fruitSize + layout.gridGap)
-        const y = startY + row * (layout.fruitSize + layout.gridGap)
+        const x = startX + col * (fruitSize + gridGap)
+        const cellY = startY + row * (fruitSize + gridGap)
         const seed = this.getInitialFruitSeed()
         const initialElapsed = seed.elapsedMs
         const state = seed.state
-        const sprite = this.add.image(x, y, 'fruit')
-        sprite.setDisplaySize(layout.fruitSize, layout.fruitSize)
+        const sprite = this.add.image(x, cellY, 'fruit')
+        sprite.setDisplaySize(fruitSize, fruitSize)
         sprite.setDepth(10)
         sprite.setTint(FRUIT_TINTS[state])
         sprite.setAngle(Phaser.Math.Between(-8, 8))
 
-        const hitArea = this.add.zone(x, y, layout.hitSize, layout.hitSize)
+        const hitArea = this.add.zone(x, cellY, hitSize, hitSize)
         hitArea.setDepth(11)
         hitArea.setInteractive({ useHandCursor: true })
 
@@ -443,6 +500,17 @@ export class GameScene extends Phaser.Scene {
       return
     }
 
+    const timeoutEvent = this.comboSystem.update(delta)
+    if (timeoutEvent) {
+      this.comboWidget?.onBreak(timeoutEvent)
+      this.comboFx?.onComboBreak(timeoutEvent, this.comboWidgetX, this.comboWidgetY)
+    }
+
+    this.comboWidget?.updateMeter(
+      this.comboSystem.timeRemainingRatio,
+      this.comboSystem.tier.fxIntensity
+    )
+
     for (let i = 0; i < this.fruits.length; i++) {
       const cell = this.fruits[i]
       if (!cell.active) {
@@ -464,15 +532,10 @@ export class GameScene extends Phaser.Scene {
     cell.hitArea.disableInteractive()
     this.fruitsRemaining -= 1
 
-    if (this.comboResetTimer) {
-      this.comboResetTimer.destroy()
-      this.comboResetTimer = null
-    }
-
     if (state === 2) {
       this.perfectPops += 1
       this.scoreSystem.add(this.levelConfig.perfectPoints)
-      this.comboChain += 1
+      const comboUpdate = this.comboSystem.increment()
       this.spawnPopup(
         cell.sprite.x,
         cell.sprite.y - 4,
@@ -484,13 +547,14 @@ export class GameScene extends Phaser.Scene {
       this.popParticles?.explode(BALANCING.particleBurstCount, cell.sprite.x, cell.sprite.y)
       this.cameras.main.flash(60, 255, 255, 255)
       AudioManager.playSfx(this, 'sfx_perfect')
-      this.scheduleComboReset()
+      this.comboWidget?.onIncrement(comboUpdate)
+      this.comboFx?.onComboIncrease(comboUpdate, cell.sprite.x, cell.sprite.y)
     } else if (state === 3) {
       this.dirtMeter = Math.min(
         BALANCING.dirtFailThreshold,
         this.dirtMeter + this.levelConfig.dirtPerOverripe
       )
-      this.comboChain = 0
+      const comboBreak = this.comboSystem.break('overripe_tap')
       this.spawnPopup(
         cell.sprite.x,
         cell.sprite.y - 4,
@@ -502,16 +566,23 @@ export class GameScene extends Phaser.Scene {
       this.popParticles?.explode(BALANCING.particleBurstCount, cell.sprite.x, cell.sprite.y)
       this.cameras.main.shake(100, 0.0025)
       AudioManager.playSfx(this, 'sfx_rotten')
+      if (comboBreak) {
+        this.comboWidget?.onBreak(comboBreak)
+        this.comboFx?.onComboBreak(comboBreak, cell.sprite.x, cell.sprite.y)
+      }
     } else {
-      this.comboChain = 0
+      const comboBreak = this.comboSystem.break('wrong_tap')
       this.spawnPopup(cell.sprite.x, cell.sprite.y - 4, POPUP_LABELS[state], POPUP_COLORS[state], 1)
       this.spawnSplatter(cell.sprite.x, cell.sprite.y, FRUIT_TINTS[state], 0.95)
       this.popParticles?.explode(BALANCING.particleBurstCount, cell.sprite.x, cell.sprite.y)
       AudioManager.playSfx(this, 'sfx_pop')
+      if (comboBreak) {
+        this.comboWidget?.onBreak(comboBreak)
+        this.comboFx?.onComboBreak(comboBreak, cell.sprite.x, cell.sprite.y)
+      }
     }
 
     this.animateFruitRemoval(cell.sprite)
-    this.updateComboText()
     this.drawDirtMeter()
     this.updatePerfectText()
 
@@ -598,27 +669,6 @@ export class GameScene extends Phaser.Scene {
     })
   }
 
-  private scheduleComboReset(): void {
-    this.comboText.setVisible(this.comboChain > 1)
-    if (this.comboChain <= 1) {
-      return
-    }
-
-    this.comboResetTimer = this.time.delayedCall(this.levelConfig.comboResetMs, () => {
-      this.comboChain = 0
-      this.updateComboText()
-    })
-  }
-
-  private updateComboText(): void {
-    if (this.comboChain > 1) {
-      this.comboText.setText(`COMBO x${this.comboChain}`).setVisible(true)
-      return
-    }
-
-    this.comboText.setVisible(false)
-  }
-
   private updateHUD(force = false): void {
     if (force) {
       this.lastShownSecond = -1
@@ -629,7 +679,6 @@ export class GameScene extends Phaser.Scene {
     this.updateTimerText()
     this.drawDirtMeter()
     this.updatePerfectText()
-    this.updateComboText()
   }
 
   private updateTimerText(): void {
@@ -677,7 +726,7 @@ export class GameScene extends Phaser.Scene {
     this.lastDirtValue = this.dirtMeter
 
     const ratio = Phaser.Math.Clamp(this.dirtMeter / BALANCING.dirtFailThreshold, 0, 1)
-    const barWidth = 170
+    const barWidth = this.dirtBarWidth
     const barHeight = 14
     const fillWidth = Math.max(0, Math.round(barWidth * ratio))
     let fillColor = 0x7ccf5b
@@ -689,14 +738,14 @@ export class GameScene extends Phaser.Scene {
 
     this.dirtTrack.clear()
     this.dirtTrack.fillStyle(0x8c7352, 0.16)
-    this.dirtTrack.fillRoundedRect(16, 92, barWidth, barHeight, 7)
+    this.dirtTrack.fillRoundedRect(this.dirtBarX, this.dirtBarY, barWidth, barHeight, 7)
     this.dirtTrack.lineStyle(2, 0x7a3e2c, 0.28)
-    this.dirtTrack.strokeRoundedRect(16, 92, barWidth, barHeight, 7)
+    this.dirtTrack.strokeRoundedRect(this.dirtBarX, this.dirtBarY, barWidth, barHeight, 7)
 
     this.dirtFill.clear()
     if (fillWidth > 0) {
       this.dirtFill.fillStyle(fillColor, 1)
-      this.dirtFill.fillRoundedRect(16, 92, fillWidth, barHeight, 7)
+      this.dirtFill.fillRoundedRect(this.dirtBarX, this.dirtBarY, fillWidth, barHeight, 7)
     }
 
     this.dirtValueText.setText(`${this.dirtMeter} / ${BALANCING.dirtFailThreshold}`)
@@ -718,11 +767,12 @@ export class GameScene extends Phaser.Scene {
 
     this.gameEnded = true
     this.resultQueued = true
-    this.stopPokiGameplay()
+    pokiBridge.gameplayStop(outcome === 'win' ? 'round_end_win' : 'round_end_lose')
+    this.disarmFirstInputGate()
 
-    if (this.comboResetTimer) {
-      this.comboResetTimer.destroy()
-      this.comboResetTimer = null
+    const comboBreak = this.comboSystem.break('round_end')
+    if (comboBreak) {
+      this.comboWidget?.onBreak(comboBreak)
     }
 
     for (let i = 0; i < this.fruits.length; i++) {
@@ -771,12 +821,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   shutdown(): void {
-    if (this.comboResetTimer) {
-      this.comboResetTimer.destroy()
-      this.comboResetTimer = null
+    pokiBridge.gameplayStop('scene_shutdown')
+    this.disarmFirstInputGate()
+    this.comboFx?.destroy()
+    this.comboFx = null
+    if (this.comboWidget) {
+      this.tweens.killTweensOf(this.comboWidget)
+      this.comboWidget.destroy()
+      this.comboWidget = null
     }
-
-    this.stopPokiGameplay()
     this.destroyPools()
     this.destroyParticles()
   }
