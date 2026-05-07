@@ -105,8 +105,6 @@ export class GameScene extends Phaser.Scene {
   private lastPerfectValue = -1
   private gameEnded = false
   private resultQueued = false
-  private hasPlayerInteracted = false
-  private firstInteractionHandler: (() => void) | null = null
   private comboWidgetX = CX
   private comboWidgetY = 120
   private boardCenterX = CX
@@ -140,8 +138,6 @@ export class GameScene extends Phaser.Scene {
     this.lastPerfectValue = -1
     this.gameEnded = false
     this.resultQueued = false
-    this.hasPlayerInteracted = false
-    this.firstInteractionHandler = null
     this.comboSystem = new ComboSystem(this.levelConfig.comboResetMs)
     this.ripeCue = new RipeFruitCue({ scene: this, animationEnabled: true })
 
@@ -152,39 +148,8 @@ export class GameScene extends Phaser.Scene {
     this.createFruitBoard()
     this.refreshRipeCue()
     this.updateHUD(true)
-    pokiBridge.init(this)
-    this.armFirstInputGate()
 
     // TODO: analytics hook - gameplay_started
-  }
-
-  private armFirstInputGate(): void {
-    if (this.firstInteractionHandler) {
-      return
-    }
-
-    this.firstInteractionHandler = () => {
-      if (this.hasPlayerInteracted || this.gameEnded) {
-        return
-      }
-
-      this.hasPlayerInteracted = true
-      pokiBridge.gameplayStart('first_player_input')
-      this.disarmFirstInputGate()
-    }
-
-    this.input.on(Phaser.Input.Events.POINTER_DOWN, this.firstInteractionHandler)
-    this.input.keyboard?.on('keydown', this.firstInteractionHandler)
-  }
-
-  private disarmFirstInputGate(): void {
-    if (!this.firstInteractionHandler) {
-      return
-    }
-
-    this.input.off(Phaser.Input.Events.POINTER_DOWN, this.firstInteractionHandler)
-    this.input.keyboard?.off('keydown', this.firstInteractionHandler)
-    this.firstInteractionHandler = null
   }
 
   private createBackground(): void {
@@ -615,7 +580,6 @@ export class GameScene extends Phaser.Scene {
     this.gameEnded = true
     this.resultQueued = true
     pokiBridge.gameplayStop(outcome === 'win' ? 'round_end_win' : 'round_end_lose')
-    this.disarmFirstInputGate()
 
     const comboBreak = this.comboSystem.break('round_end')
     if (comboBreak) {
@@ -669,7 +633,6 @@ export class GameScene extends Phaser.Scene {
 
   shutdown(): void {
     pokiBridge.gameplayStop('scene_shutdown')
-    this.disarmFirstInputGate()
     this.comboFx?.destroy()
     this.comboFx = null
     if (this.ripeCue) {
