@@ -71,7 +71,7 @@ export class RipeFruitCue extends Phaser.GameObjects.Container {
   }
 
   override destroy(fromScene?: boolean): void {
-    this.scene.tweens.killTweensOf([this, this.tapLabel, this.sparkle, this.halo, this.ring])
+    this.scene?.tweens?.killTweensOf([this, this.tapLabel, this.sparkle, this.halo, this.ring])
     super.destroy(fromScene)
   }
 

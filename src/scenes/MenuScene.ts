@@ -216,7 +216,6 @@ export class MenuScene extends Phaser.Scene {
 
   private startGame(): void {
     // TODO: analytics hook - game_started
-    pokiBridge.gameplayStart('play_button')
     this.cameras.main.fadeOut(BALANCING.sceneFadeDuration, 0, 0, 0)
     this.cameras.main.once(
       Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE,
